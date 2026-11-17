@@ -1,0 +1,31 @@
+services:
+  app:
+    build: .
+    init: true
+    ports:
+      - "127.0.0.1:${FANGSCHOOL_PORT:-8000}:80"
+    environment:
+      APP_NAME: FangSchool
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_URL: "http://localhost:${FANGSCHOOL_PORT:-8000}"
+      DB_CONNECTION: sqlite
+      DB_DATABASE: /var/lib/fangschool/database.sqlite
+      SESSION_DRIVER: file
+      SESSION_SECURE_COOKIE: "false"
+      CACHE_STORE: file
+      LOG_CHANNEL: stderr
+      FANGSCHOOL_ADMIN_EMAILS: "${FANGSCHOOL_ADMIN_EMAILS:-}"
+      FANGSCHOOL_MAIL_FROM: "${FANGSCHOOL_MAIL_FROM:-FangSchool <otp@mail.fangschool.site>}"
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+    volumes:
+      - fangschool-data:/var/lib/fangschool
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1/up') === false ? 1 : 0);"]
+      interval: 10s
+      timeout: 4s
+      start_period: 20s
+      retries: 5
+
+volumes:
+  fangschool-data:
