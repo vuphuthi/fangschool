@@ -19,7 +19,7 @@ RUN apt-get update \
     && a2enmod rewrite
 
 COPY --from=composer-bin /usr/bin/composer /usr/local/bin/composer
-COPY composer.json ./
+COPY composer.json composer.lock ./
 RUN COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --no-interaction --prefer-dist --no-progress --no-autoloader --no-scripts
 
 COPY --chown=www-data:www-data . .

@@ -1,4 +1,4 @@
-const audioBase = new URL('/audio/', import.meta.url);
+const audioBase = new URL('./audio/', import.meta.url);
 const player = new Audio();
 player.preload = 'none';
 player.id = 'mandarin-player';

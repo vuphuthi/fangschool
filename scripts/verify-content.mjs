@@ -7,7 +7,8 @@ const app = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const root = join(app, 'storage/app/private/fangschool');
 const read = (name) => JSON.parse(readFileSync(join(root, name), 'utf8'));
 const manifest = read('manifest.json');
-const validLevel = (number) => [1, 2, 3, 4].includes(number);
+const counts = {1: 15, 2: 12, 3: 11, 4: 22, 31: 1, 32: 1, 41: 0, 42: 0};
+const tracks = {41: 'factory', 42: 'office'};
 const checkAsset = (folder, filename) => {
   const pattern = folder === 'audio' ? /^[a-z0-9-]+\.mp3$/ : /^[A-Za-z0-9-]+\.(pdf|webp)$/;
   assert(pattern.test(filename), filename);
@@ -17,15 +18,24 @@ const checkAsset = (folder, filename) => {
 
 for (const type of ['audio', 'exams']) {
   for (const [filename, level] of Object.entries(manifest[type])) {
-    assert(validLevel(level), filename);
+    assert([1, 2, 3, 4].includes(level) || (type === 'audio' && level === 99 && manifest.workplaceAudio[filename]?.length), filename);
     checkAsset(type, filename);
   }
 }
-for (const level of [1, 2, 3, 4]) {
+for (const level of Object.keys(counts).map(Number)) {
   const content = read('learning/' + level + '.json');
   const exams = content.examCatalog?.papers ?? [];
   assert(content.lessons.length > 0);
-  assert.equal(exams.length, [15, 12, 11, 22][level - 1]);
+  assert.equal(exams.length, counts[level]);
+  const track = tracks[level];
+  const canPlay = (file) => track ? manifest.workplaceAudio[file]?.includes(track) :
+    Number.isInteger(manifest.audio[file]) && manifest.audio[file] <= (level > 30 ? level - 30 : level);
+  if (track) {
+    assert.equal(content.lessons.length, level === 41 ? 21 : 15);
+    assert.equal(content.lessons.filter(lesson => lesson.extension).length, 8);
+    assert.equal(content.lessons.flatMap(lesson => lesson.questions).filter(question => question.kind === 2).length,
+      level === 41 ? 54 : 35);
+  }
   if (level === 4) {
     const groups = content.examCatalog.practiceSeries;
     assert.deepEqual(groups.map(group => group.key), ['hanban', 'tinhgiang']);
@@ -43,16 +53,26 @@ for (const level of [1, 2, 3, 4]) {
       }
     }
   }
-  for (const file of Object.values(content.audioFiles)) assert(manifest.audio[file] <= level, file);
+  for (const file of [...Object.values(content.audioFiles), ...Object.values(content.flashcardAudio.samples)]) {
+    assert(canPlay(file), file);
+  }
   for (const voice of Object.values(content.flashcardAudio.readers)) {
-    for (const file of Object.values(voice)) assert(manifest.audio[file] <= level, file);
+    for (const file of Object.values(voice)) assert(canPlay(file), file);
   }
   for (const exam of exams) {
     assert.match(exam.title, /PH[0-9]+/);
-    if (exam.audio) assert.equal(manifest.audio[exam.audio.split('/').at(-1)], level);
-    assert.equal(manifest.exams[exam.pdf.split('/').at(-1)], level);
-    for (const [page] of exam.pages) assert.equal(manifest.exams[exam.id + '-p' + page + '.webp'], level);
+    if (exam.audio) assert(canPlay(exam.audio.split('/').at(-1)), exam.audio);
+    if (exam.pdf) {
+      assert.equal(manifest.exams[exam.pdf.split('/').at(-1)], level);
+      for (const [page] of exam.pages) assert.equal(manifest.exams[exam.id + '-p' + page + '.webp'], level);
+    } else {
+      assert([31, 32].includes(level));
+      assert.equal(exam.answerKey.length, 20);
+      assert.equal(Object.keys(exam.prompts).length, 20);
+      assert.equal(Object.keys(exam.recordings).length, 10);
+      for (const clip of Object.values(exam.recordings)) assert(canPlay(clip.split('/').at(-1)), clip);
+    }
   }
-  console.log('HSK ' + level + ': ' + content.lessons.length + ' mục học, ' + exams.length + ' đề PH');
+  console.log('Khóa ' + level + ': ' + content.lessons.length + ' mục học, ' + exams.length + ' đề PH');
 }
 console.log(Object.keys(manifest.audio).length + ' file MP3 và ' + Object.keys(manifest.exams).length + ' file tài liệu đã được kiểm tra.');

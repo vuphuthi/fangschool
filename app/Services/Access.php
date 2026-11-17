@@ -11,6 +11,9 @@ final class Access
     public const COOKIE = 'fangschool_access';
     public const DAY = 86_400_000;
     public const TTL = 365 * self::DAY;
+    public const TRACKS = ['factory' => 41, 'office' => 42];
+    public const COURSE_PATTERN = '(?:[1-4]|3[12]|4[12])';
+    private const HSK_COURSES = [1 => 1, 2 => 2, 3 => 3, 4 => 4, 31 => 1, 32 => 2];
 
     public function email(mixed $value): string
     {
@@ -39,6 +42,25 @@ final class Access
         return DB::table('grants')->where('email', $email)->where('revoked', false)->where('expires_at', '>', $now)->first();
     }
 
+    public function workplaceGrants(string $email, int $now)
+    {
+        return DB::table('workplace_grants')->where('email', $email)
+            ->where('revoked', false)->where('expires_at', '>', $now)->orderBy('track')->get();
+    }
+
+    public function hasLearningAccess(string $email, int $now): bool
+    {
+        return $this->grant($email, $now) !== null || $this->workplaceGrants($email, $now)->isNotEmpty();
+    }
+
+    public function canStudy(array $user, int $course): bool
+    {
+        $track = array_search($course, self::TRACKS, true);
+
+        return $track !== false ? in_array($track, $user['tracks'], true)
+            : isset(self::HSK_COURSES[$course]) && $user['maxLevel'] >= self::HSK_COURSES[$course];
+    }
+
     public function identity(Request $request, bool $refresh = false): ?array
     {
         $token = $request->cookie(self::COOKIE);
@@ -55,7 +77,8 @@ final class Access
 
         $admin = (bool) $record->admin && in_array($record->email, $this->admins(), true);
         $grant = $admin ? null : $this->grant($record->email, $now);
-        if (!$admin && !$grant) {
+        $workplace = $admin ? collect() : $this->workplaceGrants($record->email, $now);
+        if (!$admin && !$grant && $workplace->isEmpty()) {
             return null;
         }
 
@@ -70,8 +93,9 @@ final class Access
 
         return [
             'email' => $record->email,
-            'maxLevel' => $admin ? 4 : (int) $grant->max_level,
-            'expiresAt' => $admin ? $expiresAt : min($expiresAt, (int) $grant->expires_at),
+            'maxLevel' => $admin ? 4 : (int) ($grant->max_level ?? 0),
+            'tracks' => $admin ? array_keys(self::TRACKS) : $workplace->pluck('track')->all(),
+            'expiresAt' => $admin ? $expiresAt : min($expiresAt, max((int) ($grant->expires_at ?? 0), (int) $workplace->max('expires_at'))),
             'admin' => $admin,
         ];
     }

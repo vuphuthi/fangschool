@@ -17,3 +17,5 @@ storage/logs/*
 !storage/logs/.gitignore
 bootstrap/cache/*
 !bootstrap/cache/.gitignore
+FangSchool-DuLieu/
+fangschool-backup.sqlite*

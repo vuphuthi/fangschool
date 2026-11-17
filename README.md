@@ -1,20 +1,20 @@
 # FangSchool
 
-Bản chuyển từ FangSchool đang sử dụng (mã nguồn Sites tại commit `d55601b`) sang Laravel 13.42.0 và Vue 3.5.45. Có thể chạy trên máy riêng. Dự án này sử dụng cơ sở dữ liệu riêng và không tác động đến website hiện tại.
+Bản chuyển từ FangSchool đang sử dụng (mã nguồn Sites tại commit `c194f3c4782f218d1c67a71a0ba82e3056bcf942`, bản 33) sang Laravel 13.42.0 và Vue 3.5.45. Có thể chạy trên máy riêng. Dự án này sử dụng cơ sở dữ liệu riêng và không tác động đến website hiện tại.
 
 ## Thành phần
 
 - Laravel quản lý OTP qua Resend, phiên đăng nhập, quyền theo email, tiến độ và phân quyền khi mở học liệu hoặc audio.
-- Vue xây dựng form OTP và màn quản trị cấp quyền. Phần học, câu hỏi và đề thi sử dụng lại JavaScript đã chạy trên FangSchool trong `public/lesson`.
-- Học liệu HSK 1–4, 38 đề PH của HSK 1–3, 22 đề và bài luyện HSK 4 và audio hiện có nằm tại `storage/app/private/fangschool`. Laravel đọc nội dung qua các route có xác thực.
+- Vue xây dựng form OTP, quản trị cấp quyền và màn hình tiến độ tại `/admin/progress`. Phần học, câu hỏi và đề thi sử dụng lại JavaScript đã chạy trên FangSchool trong `public/lesson`.
+- Học liệu HSK 1–4, HSK 1–2 bản 3.0, Công xưởng, Văn phòng, toàn bộ đề PH và audio của bản 33 nằm tại `storage/app/private/fangschool`. Laravel đọc nội dung qua các route có xác thực.
 - Tab Hanban HSK 4 có 12 đề gốc PH1–PH12 từ bộ Nguyên Khôi, 100 câu mỗi đề, có PDF, ảnh trang đề và audio. FangSchool chấm 95 câu có đáp án xác định. Năm câu đặt câu theo ảnh dùng bài mẫu để tự đối chiếu. Tab Tinh giảng có 10 bài luyện biên soạn từ học liệu FangSchool.
 - Chức năng biên tập câu hỏi trong màn học giữ cách lưu theo trình duyệt của phiên bản ban đầu. Quyền truy cập và tiến độ học lưu ở cơ sở dữ liệu.
-- Gói không kèm dữ liệu học viên, lịch sử học, phiên đăng nhập hoặc khóa Resend từ website hiện tại. Sau khi cài, dùng tài khoản quản trị để cấp quyền học viên, hoặc nhập dữ liệu được xuất từ hệ thống hiện tại trước khi chuyển website.
+- Bản sao dữ liệu máy chủ được cung cấp riêng. Nếu bạn đã tải gói xuất Laravel, tìm thư mục `FangSchool-DuLieu` bên cạnh mã nguồn và xem `thong-ke.json` để biết số bản ghi có thể phục hồi.
 
 ## Chạy bằng Docker Desktop
 
 1. Cài và mở Docker Desktop (chế độ Linux containers). Nếu chạy lệnh trong WSL, bật tích hợp Docker Desktop cho bản Ubuntu đang dùng.
-2. Giải nén ZIP, mở terminal trong thư mục `FangSchool`, rồi chạy:
+2. Clone repo hoặc giải nén ZIP, mở terminal ở thư mục dự án, rồi chạy:
 
 ```bash
 docker compose up --build -d --wait
@@ -75,6 +75,23 @@ DB_PASSWORD=replace-with-your-password
 
 ## Luồng dữ liệu
 
-- `grants` lưu quyền truy cập, `learner_progress` lưu snapshot theo cặp email và cấp HSK. Thời hạn cấp quyền và dấu thời gian sử dụng epoch milliseconds.
-- Khi chuyển từ D1, dữ liệu tiến độ HSK 1–3 ở `learner_progress`, HSK 4 ở `learner_progress_hsk4`. Cả hai nguồn vào bảng `learner_progress` mới, giữ `email`, `level`, `snapshot` và `revision`. Chỉ nhập dữ liệu từ bản xuất tin cậy. Phiên và OTP cũ không cần nhập.
+- `grants` lưu quyền HSK, `workplace_grants` lưu quyền Công xưởng và Văn phòng, `learner_progress` lưu snapshot theo email và mã khóa học. Thời hạn và dấu thời gian dùng epoch milliseconds.
+- Lệnh nhập ánh xạ bốn bảng tiến độ D1 vào `learner_progress`, giữ nguyên email, mã khóa, snapshot và revision. Bản ghi trùng khóa được giữ lại ở cơ sở dữ liệu đích.
 - Dữ liệu HSK lưu dưới dạng JSON trong thư mục học liệu. Giữ ID của câu hỏi/đề khi chỉnh nội dung để lịch sử hiện có vẫn khớp.
+
+
+## Nhập bản sao máy chủ sau khi chạy migration
+
+Chạy từ thư mục `FangSchool`. Bản sao có dữ liệu học viên, giữ ngoài repo và chỉ dùng khi cần khôi phục.
+
+```bash
+php artisan fangschool:import-site-data ../FangSchool-DuLieu/fangschool-backup.sqlite
+```
+
+Với Docker Compose, sau khi container đã chạy:
+
+```bash
+docker compose cp ../FangSchool-DuLieu/fangschool-backup.sqlite app:/tmp/fangschool-backup.sqlite
+docker compose exec app php artisan fangschool:import-site-data /tmp/fangschool-backup.sqlite
+docker compose exec app rm /tmp/fangschool-backup.sqlite
+```

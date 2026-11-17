@@ -1,15 +1,30 @@
 import {sameOriginFetch as fetch} from '../request.js';
-const blank=()=>({attempts:[],words:{},marks:{},history:[],last:1});
+const viewLimits={questions:2500,examPages:1000};
+const blank=()=>({attempts:[],words:{},marks:{},history:[],last:1,views:mergeViews()});
 const copy=state=>structuredClone(state);
 const append=(remote,local)=>{
  const rows=new Map([...remote,...local].map(value=>[JSON.stringify(value),value]));
  return [...rows.values()].sort((a,b)=>a.at-b.at);
 };
 const changes=(map,previous)=>Object.fromEntries(Object.entries(map).filter(([key,value])=>previous[key]!==value));
+function mergeViews(left,right){
+ return Object.fromEntries(Object.entries(viewLimits).map(([category,limit])=>{
+  const output=new Map();
+  for(const view of [left?.[category],right?.[category]]){
+   for(const [key,time] of Object.entries(view??{})){
+    if(Number.isSafeInteger(time)&&time>0)output.set(key,Math.max(time,output.get(key)??0));
+   }
+  }
+  const entries=[...output];
+  if(entries.length>limit)entries.sort((a,b)=>b[1]-a[1]);
+  return [category,Object.fromEntries(entries.slice(0,limit))];
+ }));
+}
 function merge(remote,local,base){
  return {
   attempts:append(remote.attempts,local.attempts),history:append(remote.history,local.history),
   words:{...remote.words,...changes(local.words,base.words)},marks:{...remote.marks,...changes(local.marks,base.marks)},
+  views:mergeViews(remote.views,local.views),
   last:local.last===base.last?remote.last:local.last
  };
 }
@@ -31,6 +46,7 @@ export async function openProgress(level,restore,cache,onExpired,onError){
   if(result.state){base=copy(result.state);initial=result.state}
  }catch{onError()}
  const local=restore(),state=initial??local??blank();
+ state.views=mergeViews(initial?.views,local?.views);
  let pending=false,saving=false;
  async function flush(){
   if(!pending||saving)return;
@@ -58,5 +74,14 @@ export async function openProgress(level,restore,cache,onExpired,onError){
   finally{saving=false}
  }
  window.addEventListener('online',flush);
- return {state,save(){cache(state);pending=true;void flush()}};
+ function save(){cache(state);pending=true;void flush()}
+ function recordView(category,key){
+  if(!Object.hasOwn(viewLimits,category)||typeof key!=='string'||!key||key.length>160)return;
+  const views=state.views[category],now=Date.now();
+  if(Object.hasOwn(views,key)&&now-views[key]<60_000)return;
+  state.views=mergeViews(state.views,{[category]:{[key]:now}});
+  save();
+ }
+ if(Object.entries(state.views).some(([category,items])=>Object.entries(items).some(([key,time])=>time>(base.views?.[category]?.[key]??0))))save();
+ return {state,save,recordView};
 }

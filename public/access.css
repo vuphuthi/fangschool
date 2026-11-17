@@ -4,7 +4,7 @@
 .access-card header .brand{padding:0;text-decoration:none;font-weight:800;width:fit-content}
 .access-card p,.access-card section{margin-top:1rem}
 .access-card form:not([hidden]){display:grid;gap:1rem;margin-top:1rem}
-.access-card label{display:grid;gap:.35rem;font-weight:650}
+.access-card label:not([hidden]){display:grid;gap:.35rem;font-weight:650}
 .access-card input,.access-card select{width:100%;min-height:2.6rem}
 .access-card button{justify-self:start}
 .access-admin{max-width:60rem}
@@ -18,3 +18,31 @@
 #email-error:empty{margin:0}
 #email-form [aria-invalid="true"]{border-color:#9e3b28}
 @media(max-width:680px){.access-admin .grant-form{grid-template-columns:minmax(0,1fr)}}
+
+.learner-search{max-width:25rem;margin:.8rem 0 .4rem}
+#learner-report{scroll-margin-top:1rem}
+#report-email{font-weight:700;overflow-wrap:anywhere}
+.report-toolbar{align-items:end;gap:.65rem;margin-top:.75rem}
+.report-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(8rem,1fr));gap:.6rem;margin-top:1rem}
+.report-stat{background:var(--bg,#eef5f3);border:1px solid var(--line,#dde9e5);border-radius:.65rem;padding:.7rem;display:grid;gap:.3rem}
+.report-stat small,.report-meta{color:var(--muted,#536963)}
+.report-group{margin-top:.75rem;border:1px solid var(--line,#dde9e5);border-radius:.65rem;padding:.7rem}
+.report-group summary{cursor:pointer;font-weight:650}
+.report-group .table-wrap{margin-top:.6rem;overflow-x:auto}
+.report-table td{white-space:pre-wrap;overflow-wrap:anywhere;min-width:6.2rem;vertical-align:top}
+.report-pages{margin-top:.6rem;align-items:center}
+.report-pages[hidden]{display:none}
+.report-filter{max-width:12rem;margin-top:.6rem}
+#report-status[data-error]{color:#9e3b28}
+
+.admin-navigation{gap:.5rem;margin-top:.85rem}
+.admin-navigation [aria-current="page"]{background:var(--accent,#0b7664);border-color:var(--accent,#0b7664);color:#fff}
+.admin-levels{margin-top:1.15rem}
+.admin-level-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));gap:.65rem;margin-top:.7rem}
+.admin-level{display:grid;gap:.32rem;border:1px solid var(--line,#dde9e5);padding:.7rem;border-radius:.65rem}
+.admin-level progress{width:100%;height:.55rem;accent-color:#0b7664}
+.admin-level small,.learner-activity{color:var(--muted,#536963)}
+.overview-filters{align-items:end;gap:.65rem;margin:.6rem 0}
+.overview-filters .learner-search{width:min(100%,25rem);margin:0}
+#overview-status[data-error]{color:#9e3b28}
+@media(max-width:680px){.learner-activity{flex-basis:100%}.overview-filters .learner-search{max-width:none}}

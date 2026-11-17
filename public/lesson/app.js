@@ -1,6 +1,6 @@
 import {sameOriginFetch as fetch} from '../request.js';
-import {createExamCenter} from './exams.js?v=8';
-import {openProgress} from './study-progress.js';
+import {createExamCenter} from './exams.js?v=10';
+import {openProgress} from './study-progress.js?v=2';
 import {assessmentPlan,lessonSkill,lessonSkills,grammarModes,bankGroups,bankNames,kinds} from './study-common.js';
 import {playRecording, setAudioRate, stopAudio} from './audio-player.js?v=3';
 import {flashcardReaderKey,flashcardReaders} from './reader-options.js';
@@ -18,22 +18,30 @@ const svg=(s,css='')=>'<svg aria-hidden="true" class="'+css+'" viewBox="0 0 24 2
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const params=new URLSearchParams(location.search);
 const course=params.has('hsk')?Number(params.get('hsk')):Math.min(viewer.maxLevel,2);
-const courseName='HSK '+course;
+const track=params.get('track');
+const trackNames={factory:'Công xưởng',office:'Văn phòng'};
+const trackIds={factory:41,office:42};
+const isWorkplace=Object.hasOwn(trackIds,track);
+const isEdition30=params.get('edition')==='3.0';
+const courseId=isWorkplace?trackIds[track]:isEdition30?30+course:course;
+const courseName=isWorkplace?trackNames[track]:'HSK '+course+(isEdition30?' · 3.0':'');
 const lessonCount=()=>lessons.filter(l=>l.n<100).length;
 const lessonLabel=n=>n>=100?'Ngữ âm '+(n-100):'Bài '+n;
 const locationLabel=q=>q.origin==='bank'?esc(q.topic):lessonLabel(q.lesson);
-const baseQuery='?hsk='+course;
+const baseQuery=isWorkplace?'?track='+track:'?hsk='+course+(isEdition30?'&edition=3.0':'');
 const examDestination=()=>location.hash.startsWith('#exams')?'#exams':'';
-const courseTabs=()=>'<nav class="course-tabs" aria-label="Cấp độ HSK">'+[1,2,3,4].filter(n=>n<=viewer.maxLevel).map(n=>
- '<a class="course-tab'+(n===course?' active':'')+'" href="/?hsk='+n+examDestination()+'"'+(n===course?' aria-current="page"':'')+'>HSK ' +n+'</a>').join('')+'</nav>';
-const storageKey=key=>'bao-hsk'+(key==='settings'?2:course)+':'+viewer.email+':'+key;
+const courseTabs=()=>'<nav class="course-tabs" aria-label="Khóa học">'+[1,2,3,4,31,32].filter(id=>(id>30?id-30:id)<=viewer.maxLevel).map(id=>{
+ const updated=id>30,level=updated?id-30:id,active=id===courseId;
+ return '<a class="course-tab'+(active?' active':'')+'" href="/?hsk='+level+(updated?'&amp;edition=3.0'+examDestination():examDestination())+'"'+(active?' aria-current="page"':'')+'>HSK '+level+(updated?' 3.0':'')+'</a>';
+}).join('')+Object.keys(trackNames).filter(id=>viewer.tracks?.includes(id)).map(id=>'<a class="course-tab'+(id===track?' active':'')+'" href="/?track='+id+'"'+(id===track?' aria-current="page"':'')+'>'+trackNames[id]+'</a>').join('')+'</nav>';
+const storageKey=key=>'bao-hsk'+(key==='settings'?2:courseId)+':'+viewer.email+':'+key;
 function storage(key,fallback){try{return JSON.parse(localStorage.getItem(storageKey(key)))??fallback}catch{return fallback}}
 function persist(key,val){try{localStorage.setItem(storageKey(key),JSON.stringify(val));return true}catch{notify('Trình duyệt đang chặn lưu dữ liệu.');return false}}
 let state,syncProgress;
 const settings=storage('settings',{theme:'light',lang:'vi',rate:1,hideZh:false,hidePy:false,showVi:false});
 let catalog,exams,wordlist=[],levelQuestions=[],lessons=[],questions=[],quiz=storage('session',null),flash=0,flip=false,expanded=false,timeout,teacherLesson=1;
 const edits=storage('content',{});
-const names={exams:['Đề ôn thi','Mock exams','模拟试卷'],bank:['Luyện theo cấp HSK','Practice by HSK level','按HSK等级练习'],home:['Tổng quan','Overview','首页'],lessons:['Bài học','Lessons','课程'],practice:['Ôn tập tổng hợp','Mixed review','综合复习'],review:['Cần ôn lại','Review list','待复习'],progress:['Tiến độ','Progress','学习进度'],teacher:['Giáo viên','Teacher','教师'],lesson:['Ôn theo bài','Lesson review','单课复习'],quiz:['Làm câu hỏi','Practice','答题']};
+const names={listening:['Luyện nghe','Listening','听力练习'],exams:['Đề ôn thi','Mock exams','模拟试卷'],bank:['Luyện theo cấp HSK','Practice by HSK level','按HSK等级练习'],home:['Tổng quan','Overview','首页'],lessons:['Bài học','Lessons','课程'],practice:['Ôn tập tổng hợp','Mixed review','综合复习'],review:['Cần ôn lại','Review list','待复习'],progress:['Tiến độ','Progress','学习进度'],teacher:['Giáo viên','Teacher','教师'],lesson:['Ôn theo bài','Lesson review','单课复习'],quiz:['Làm câu hỏi','Practice','答题']};
 const tr=(vi,en,zh)=>({vi,en,zh}[settings.lang]||vi);
 const save=()=>syncProgress.save();
 const saveQuiz=()=>persist('session',quiz);
@@ -58,14 +66,14 @@ function refreshData(){
  levelQuestions=catalog.levelQuestions;
  questions=[...lessons.flatMap(l=>l.questions),...levelQuestions];
 }
-const navs=[['home','home'],['lessons','book'],['bank','target'],['exams','text'],['practice','shuffle'],['review','bookmark'],['progress','chart']];
+const navs=[['home','home'],['lessons','book'],['bank','target'],['listening','head'],['exams','text'],['practice','shuffle'],['review','bookmark'],['progress','chart']];
 function chrome(page){
  document.documentElement.dataset.theme=settings.theme;
  document.documentElement.lang=settings.lang==='zh'?'zh-CN':settings.lang;
- const title=k=>tr(...(names[k]??names.home));
+ const title=k=>isWorkplace&&k==='bank'?'Ngân hàng luyện tập':tr(...(names[k]??names.home));
  $('sidebar').innerHTML='<div class="brand"><span class="brand-mark">'+svg('book')+'</span><span>Fang<em>School</em></span></div><div class="nav-label">'+tr('HỌC TẬP','STUDY','学习')+'</div>'+
- navs.filter(([k])=>k!=='exams'||catalog?.examCatalog).map(([k,i])=>'<button class="nav '+((page===k||(page==='lesson'&&k==='lessons'))?'active':'')+'" data-action="go:'+k+'">'+svg(i)+esc(title(k))+'</button>').join('')+
- (viewer.admin?'<div class="nav-label">QUẢN LÝ</div><a class="nav" href="/admin">'+svg('teacher')+'Quản lý quyền</a><button class="nav '+(page==='teacher'?'active':'')+'" data-action="go:teacher">'+svg('book')+esc(title('teacher'))+'</button>':'')+
+ navs.filter(([k])=>k!=='exams'&&k!=='listening'||k==='exams'&&catalog?.examCatalog||k==='listening'&&isWorkplace).map(([k,i])=>'<button class="nav '+((page===k||(page==='lesson'&&k==='lessons'))?'active':'')+'" data-action="go:'+k+'">'+svg(i)+esc(title(k))+'</button>').join('')+
+ (viewer.admin?'<div class="nav-label">QUẢN LÝ</div><a class="nav" href="/admin">'+svg('teacher')+'Quản lý quyền</a><a class="nav" href="/admin/progress">'+svg('chart')+'Tiến độ học viên</a><button class="nav '+(page==='teacher'?'active':'')+'" data-action="go:teacher">'+svg('book')+esc(title('teacher'))+'</button>':'')+
  '<div class="side-foot"><div><b>'+esc(viewer.email)+'</b>'+button('Đăng xuất','logout')+'</div></div>';
 
  $('top').innerHTML='<div class="crumb"><button class="iconbtn mobile" data-action="drawer" aria-label="Menu">'+svg('menu')+'</button><span class="crumb-brand">FangSchool</span><span aria-hidden="true">/</span><b>'+esc(title(page))+'</b></div>'+courseTabs()+'<div class="top-actions"><label class="row" aria-label="Ngôn ngữ">'+svg('globe')+'<select id="language" aria-label="Ngôn ngữ"><option value="vi">VI</option><option value="en">EN</option><option value="zh">中文</option></select></label><button class="iconbtn" data-action="theme" aria-label="Giao diện sáng/tối">'+svg(settings.theme==='dark'?'sun':'moon')+'</button></div>';
@@ -79,12 +87,13 @@ const stats=()=>{
 const statCards=()=>'<div class="grid4 stats">'+stats().map(([v,l,i])=>'<div class="stat"><div class="iconbox">'+svg(i)+'</div><div><strong>'+esc(v)+'</strong><small>'+esc(l)+'</small></div></div>').join('')+'</div>';
 const lessonCard=l=>'<button class="lesson" data-action="go:lesson/'+l.n+'"><span class="num">'+(l.n>=100?'Â'+(l.n-100):String(l.n).padStart(2,'0'))+'</span><div><h3 class="han" lang="zh-CN">'+esc(l.zh)+'</h3><small>'+esc(l.vi)+'</small></div>'+svg('chev','chevron')+'</button>';
 const skillNames=[0,1,2,4];
-const skills=()=>'<section class="skills"><div class="section-head"><h2>'+tr('Luyện theo kỹ năng','Practice by skill','分技能练习')+'</h2></div><div class="grid4">'+skillNames.map((i,j)=>'<button class="skill" data-action="preset:'+i+'"><span class="iconbox">'+svg(['text','book','head','shuffle'][j])+'</span><b>'+esc(kinds[i])+'</b></button>').join('')+'</div></section>';
+const skills=()=>'<section class="skills"><div class="section-head"><h2>'+tr('Luyện theo kỹ năng','Practice by skill','分技能练习')+'</h2></div><div class="grid4">'+skillNames.map((i,j)=>({i,j})).map(({i,j})=>'<button class="skill" data-action="'+(isWorkplace&&i===2?'go:listening':'preset:'+i)+'"><span class="iconbox">'+svg(['text','book','head','shuffle'][j])+'</span><b>'+esc(kinds[i])+'</b></button>').join('')+'</div></section>';
+const editionNote=()=>isEdition30&&course===1?'<div class="form-actions">'+inform('Chưa có tệp PowerPoint riêng cho Bài 12.')+'</div>':'';
 function home(){
  const wrong=wrongQuestions().length, unknown=Object.values(state.words).filter(x=>x==='unknown').length;
- return '<section class="hero"><div><span class="eyebrow">FANGSCHOOL · TIẾNG TRUNG</span><h1>'+courseName+tr(' — Trung tâm ôn tập',' — Review center',' — 复习中心')+'</h1><p>'+tr('Ôn '+lessonCount()+' bài và luyện thêm từ vựng, ngữ pháp, nghe và đọc theo cấp độ.','Review '+lessonCount()+' lessons and practice with new examples.','复习 '+lessonCount()+' 课，并用新例句练习。')+'</p><div class="wrap">'+button(quiz&&!quiz.done?tr('Tiếp tục lượt ôn','Resume practice','继续答题'):tr('Tiếp tục học','Continue learning','继续学习'),quiz&&!quiz.done?'go:quiz':'go:lesson/'+state.last,'arrow','primary')+button('Luyện theo cấp HSK','go:bank','target','secondary')+'</div></div><div class="hero-art" aria-hidden="true"><i class="orbit"></i><i class="orbit two"></i><div class="tile back">习</div><div class="tile front">复</div><span class="spark">✦</span><span class="spark bottom">✦</span></div></section>'+
+ return '<section class="hero"><div><span class="eyebrow">FANGSCHOOL · TIẾNG TRUNG</span><h1>'+courseName+tr(' — Trung tâm ôn tập',' — Review center',' — 复习中心')+'</h1><p>'+tr('Ôn '+lessonCount()+' bài và luyện thêm từ vựng, ngữ pháp, nghe và đọc theo cấp độ.','Review '+lessonCount()+' lessons and practice with new examples.','复习 '+lessonCount()+' 课，并用新例句练习。')+'</p><div class="wrap">'+button(quiz&&!quiz.done?tr('Tiếp tục lượt ôn','Resume practice','继续答题'):tr('Tiếp tục học','Continue learning','继续学习'),quiz&&!quiz.done?'go:quiz':'go:lesson/'+state.last,'arrow','primary')+button('Ngân hàng luyện tập','go:bank','target','secondary')+(isWorkplace?button('Luyện nghe','go:listening','head','secondary'):'')+'</div></div><div class="hero-art" aria-hidden="true"><i class="orbit"></i><i class="orbit two"></i><div class="tile back">习</div><div class="tile front">复</div><span class="spark">✦</span><span class="spark bottom">✦</span></div></section>'+
  statCards()+'<div class="body-grid"><section><div class="section-head"><div><h2>'+tr('Lộ trình '+lessonCount()+' bài',lessonCount()+'-lesson course','课程路线')+'</h2><p>'+tr('Chọn bài để xem lại nội dung đã học','Choose a lesson to review','选择一课开始复习')+'</p></div>'+button(expanded?'Thu gọn':'Xem tất cả','expand','chev')+'</div><div class="lessons">'+lessons.slice(0,expanded?lessons.length:6).map(lessonCard).join('')+'</div></section>'+
- '<aside class="stack"><section class="panel quick"><div class="iconbox warm">'+svg('bolt')+'</div><h3>'+tr('Ôn tập nhanh','Quick practice','快速复习')+'</h3><p>'+tr('10 câu có chấm điểm, trộn từ nhiều bài.','10 scored questions from several lessons.','十道来自不同课程的评分题。')+'</p>'+button(tr('Bắt đầu ôn nhanh','Start practice','开始复习'),'quick','arrow','primary')+'</section><section class="panel"><h3>'+tr('Cần ôn lại','Review list','待复习')+'</h3><button class="review-link" data-action="go:review"><span>'+svg('bookmark')+' Những từ chưa thuộc</span><b>'+unknown+'</b></button><button class="review-link" data-action="go:review"><span>'+svg('target')+' Câu trả lời sai</span><b>'+wrong+'</b></button></section></aside></div>'+skills();
+ '<aside class="stack"><section class="panel quick"><div class="iconbox warm">'+svg('bolt')+'</div><h3>'+tr('Ôn tập nhanh','Quick practice','快速复习')+'</h3><p>'+tr('10 câu có chấm điểm, trộn từ nhiều bài.','10 scored questions from several lessons.','十道来自不同课程的评分题。')+'</p>'+button(tr('Bắt đầu ôn nhanh','Start practice','开始复习'),'quick','arrow','primary')+'</section><section class="panel"><h3>'+tr('Cần ôn lại','Review list','待复习')+'</h3><button class="review-link" data-action="go:review"><span>'+svg('bookmark')+' Những từ chưa thuộc</span><b>'+unknown+'</b></button><button class="review-link" data-action="go:review"><span>'+svg('target')+' Câu trả lời sai</span><b>'+wrong+'</b></button></section></aside></div>'+skills()+editionNote();
 }
 const voiceKey=(text,pinyin)=>flashcardReaderKey({zh:text,pinyin});
 const selectedReader=()=>Object.hasOwn(flashcardReaders,settings.flashcardReader)?settings.flashcardReader:'current';
@@ -135,14 +144,14 @@ function questionAudio(q,label){
  const text=voiceKey(q.audio??q.zh,q.pinyin);
  if(!text?.startsWith('hsk4-recording:'))return audioButton(text,label);
  const [,lesson,part]=text.split(':');
- const original=getLesson(lesson).dialogues.find(d=>d.part===+part);
+ const original=getLesson(lesson).dialogues.find(d=>d.part===+part&&(d.recording||Object.hasOwn(audioFiles,'original-'+lesson+'-'+d.i+'.mp3')));
  return (original?button('Nghe bản thu gốc','original-audio:'+lesson+':'+original.i,'audio','','aria-pressed="false"'):'')+
   (selectedReader()==='current'?'':audioButton(text,'Nghe bản đọc bài khóa','',true));
 }
 const flashcardVoiceControls=word=>readerControls()+'<div class="wrap" aria-live="polite">'+audioButton(voiceKey(word.zh,word.pinyin),'Phát âm','primary')+'</div>';
 const dialogueAudio=(lesson,dialogue)=>{
  const text=dialogue.utterances.map(x=>x.zh).join(' ');
- const original=Boolean(dialogue.recording)||course===2&&Object.hasOwn(audioFiles,'original-'+lesson.n+'-'+dialogue.i+'.mp3');
+ const original=Boolean(dialogue.recording)||course===2&&!isEdition30&&Object.hasOwn(audioFiles,'original-'+lesson.n+'-'+dialogue.i+'.mp3');
  const recorded='hsk4-recording:'+lesson.n+':'+dialogue.part;
  const selected=selectedReader();
  const alternate=dialogue.recording&&selected==='current'?'':audioButton(dialogue.recording?recorded:text,'Nghe toàn bài',original?'':'primary',original);
@@ -190,11 +199,43 @@ function grammarStage(l){
  (more?'<details class="panel source form-actions"><summary>Ví dụ và mẫu câu khác · '+l.focus.length+'</summary><div class="stage-grid form-actions">'+more+'</div></details>':'')+
  (l.n<100?nextStage(l,'listen','Tiếp theo · Nghe hiểu'):nextStage(l,'extra','Tiếp theo · Luyện ngữ âm'));
 }
+const workplaceAudioQuestions=(items)=>items.filter(q=>q.kind===2&&q.audio&&canPlay(q.audio,q.pinyin));
+function workplaceListeningPage(){
+ if(!isWorkplace)return home();
+ const items=workplaceAudioQuestions(lessons.flatMap(lesson=>lesson.questions));
+ const dictation=items.filter(q=>!q.options?.length&&q.answers?.length);
+ const listenCards=lessons.filter(l=>l.extension).map(l=>'<section class="panel"><div class="row split"><div><h3>'+esc(l.zh)+'</h3><small>'+esc(l.subtitle)+'</small></div>'+
+  button('Nghe theo bài','go:lesson/'+l.n+'/listen','head')+'</div></section>').join('');
+ return heading('Luyện nghe · '+courseName,'Nghe Quan thoại, trả lời theo tình huống hoặc gõ lại câu vừa nghe.')+
+  '<section class="panel"><div class="row split"><div><h2>Luyện theo dạng</h2><p>'+items.length+' câu có audio · '+dictation.length+' câu chép chính tả</p></div>'+readerControls()+'</div>'+
+  '<div class="wrap form-actions">'+button('Nghe và chọn đáp án','workplace-listen:choice','head','primary')+
+  (dictation.length?button('Nghe chép chính tả','workplace-listen:dictation','text'):'')+'</div></section>'+
+  '<div class="section-head form-actions"><h2>Nghe theo chủ đề</h2></div><div class="stage-grid">'+listenCards+'</div>';
+}
+function lessonDirectory(){
+ const title=tr('Danh sách bài · '+courseName,'Lessons · '+courseName,'课程 · '+courseName);
+ const grid=items=>'<div class="lessons">'+items.map(lessonCard).join('')+'</div>';
+ if(!isWorkplace)return heading(title,'Chọn bài để học theo chủ điểm và luyện các kỹ năng.')+grid(lessons)+editionNote();
+ return heading(title,'Học theo tình huống công việc và tra từ ngay trong từng bài.')+
+  '<div class="section-head"><h2>Chủ đề mở rộng</h2>'+button('Luyện nghe','go:listening','head')+'</div>'+grid(lessons.filter(l=>l.extension))+
+  '<div class="section-head form-actions"><h2>Bài từ tài liệu gốc</h2></div>'+grid(lessons.filter(l=>!l.extension));
+}
 function listenStage(l){
  const listening=courseQuiz(l,'listen'),secondListening=courseQuiz(l,'listen2'),reading=courseQuiz(l,'read');
  const playable=listening&&canPlay(listening.audio,listening.pinyin);
  const dictation=l.questions.filter(q=>q.kind===2&&q.audio&&!q.options&&q.answers?.length&&canPlay(q.audio,q.pinyin));
- const transcript=l.dialogues.map((d,i)=>'<details class="panel source"><summary>'+(d.recording?'Bài khóa · Phần ':'Hội thoại ')+(i+1)+'</summary><div class="wrap form-actions">'+dialogueAudio(l,d)+'</div>'+d.utterances.map(u=>'<div class="dialogue-row row split"><div><small>'+esc(u.who)+'</small>'+(!settings.hideZh?' <strong class="han" lang="zh-CN">'+esc(u.zh)+'</strong>':'')+(!settings.hidePy&&u.pinyin?'<p>'+esc(u.pinyin)+'</p>':'')+(settings.showVi?'<p>'+esc(u.vi||'Chưa có bản dịch cho câu này.')+'</p>':'')+'</div>'+audioButton(voiceKey(u.zh,u.pinyin),'Nghe')+'</div>').join('')+'</details>').join('');
+ const transcript=l.dialogues.map((d,i)=>'<details class="panel source"><summary>'+(d.recording?'Bài khóa · Phần ':'Hội thoại ')+(d.part??i+1)+'</summary><div class="wrap form-actions">'+dialogueAudio(l,d)+'</div>'+(!d.utterances.length?inform('Có bản thu gốc. Văn bản trong slide này nằm trong ảnh.'): '')+d.utterances.map(u=>'<div class="dialogue-row row split"><div><small>'+esc(u.who)+'</small>'+(!settings.hideZh?' <strong class="han" lang="zh-CN">'+esc(u.zh)+'</strong>':'')+(!settings.hidePy&&u.pinyin?'<p>'+esc(u.pinyin)+'</p>':'')+(settings.showVi?'<p>'+esc(u.vi||'Chưa có bản dịch cho câu này.')+'</p>':'')+'</div>'+(!isWorkplace||canPlay(u.zh,u.pinyin)?audioButton(voiceKey(u.zh,u.pinyin),'Nghe'):'')+'</div>').join('')+'</details>').join('');
+ if(isWorkplace){
+  const items=workplaceAudioQuestions(l.questions);
+  return stageInfo('Bước 2','Hội thoại và luyện nghe','Nghe trước, trả lời rồi xem chữ Hán và nghĩa Việt trong phần chữa bài.')+
+   '<section class="panel"><div class="row split"><div><h3>Luyện nghe theo bài</h3><p>'+items.length+' câu có audio</p></div>'+
+   (items.length?readerControls():'')+'</div><div class="wrap form-actions">'+
+   (items.some(q=>q.options?.length)?button('Nghe và chọn đáp án','workplace-listen:choice:'+l.n,'head','primary'):'')+
+   (dictation.length?button('Nghe chép chính tả','workplace-listen:dictation:'+l.n,'text'):'')+
+   button('Mở kho luyện nghe','go:listening','arrow')+'</div></section>'+
+   (transcript?'<h3 class="form-actions">Hội thoại theo chủ đề</h3><div class="wrap form-actions">'+audioToggles()+'</div><div class="stack form-actions">'+transcript+'</div>':'')+
+   nextStage(l,'ex','Tiếp theo · Bài luyện');
+ }
  return stageInfo('Bước 2','Nghe để lấy ý','Đọc câu hỏi trước để biết cần nghe thông tin gì. Thử ở 1× rồi dùng 0,75× khi cần nghe lại.')+
  '<section class="panel"><div class="row split"><div><h3>'+esc(l.scenario?.topic??'Luyện nghe')+'</h3><p>'+esc(l.scenario?.prompt??'')+ '</p></div>'+readerControls()+'</div><div class="wrap form-actions">'+(playable?questionAction(listening,'Nghe và trả lời','primary'):'')+(secondListening&&canPlay(secondListening.audio)?questionAction(secondListening,'Nghe và trả lời · Phần 2'):'')+questionAction(reading,'Đọc và trả lời')+ (curriculumItems(l,'listen').length?button('Nghe và nhận diện cấu trúc','grammar-mode:'+l.n+':listen','head'):'')+ (dictation.length?button('Luyện nghe chép lại','lesson-dictation:'+l.n,'head'):'')+'</div></section>'+
  '<h3 class="form-actions">Hội thoại · nghe và đối chiếu</h3><div class="wrap form-actions">'+audioToggles()+'</div><div class="stack form-actions">'+transcript+'</div>'+nextStage(l,'ex','Tiếp theo · Bài luyện');
@@ -238,24 +279,24 @@ const dueWords=()=>lessons.flatMap(l=>l.vocab.map((w,i)=>({...w,n:l.n,i}))).filt
 const searchText=text=>text.toLowerCase().replace(/đ/g,'d').normalize('NFD').replace(/\p{M}|\s/gu,'');
 function bank(){
  const attempted=new Set(state.attempts.map(a=>a.id));
- const words=wordlist.filter(w=>w.level<=course);
+ const words=wordlist.filter(w=>isWorkplace||w.level<=course);
  const breakdown=bankNames.map(group=>{
   const items=levelQuestions.filter(q=>q.group===group),done=items.filter(q=>attempted.has(q.id)).length;
-  return '<article class="panel"><h3>'+esc(bankGroups[group])+'</h3><p>'+done+'/'+items.length+' câu đã thử</p>'+meter(Math.round(100*done/items.length))+'</article>';
+  return '<article class="panel"><h3>'+esc(bankGroups[group])+'</h3><p>'+done+'/'+items.length+' câu đã thử</p>'+meter(items.length?Math.round(100*done/items.length):0)+'</article>';
  }).join('');
- const reviewWords=words.map(w=>'<tr data-word-search="'+esc(searchText(w.zh+' '+w.readings.join(' ')+' '+w.vi))+'"><td class="han" lang="zh-CN">'+esc(w.zh)+'</td><td>'+esc(w.pinyin)+'</td><td>'+esc(w.vi)+'</td><td>HSK '+w.level+'</td></tr>').join('');
- return heading('Luyện theo cấp · '+courseName,'Chọn kỹ năng để ôn theo trình độ, kể cả chủ điểm nằm ngoài bài bạn đang học.')+
+ const reviewWords=words.map(w=>'<tr data-word-search="'+esc(searchText(w.zh+' '+w.readings.join(' ')+' '+w.vi))+'"><td class="han" lang="zh-CN">'+esc(w.zh)+'</td><td>'+esc(w.pinyin)+'</td><td>'+esc(w.vi)+'</td><td>'+(isWorkplace?courseName:'HSK '+w.level)+'</td></tr>').join('');
+ return heading('Ngân hàng luyện tập · '+courseName,'Chọn kỹ năng và số câu muốn ôn.')+
  '<div class="grid4">'+breakdown+'</div>'+
  '<section class="panel form-actions"><form id="bank-form" class="filter"><div class="wrap">'+
  '<label>Kỹ năng<select name="group"><option value="">Tất cả</option>'+bankNames.map(group=>'<option value="'+group+'">'+esc(bankGroups[group])+'</option>').join('')+'</select></label>'+
- '<label>Phạm vi từ vựng<select name="layer"><option value="">Cấp hiện tại và nền tảng</option><option value="current">Chỉ từ mới của '+courseName+'</option></select></label>'+
+ (isWorkplace?'':'<label>Phạm vi từ vựng<select name="layer"><option value="">Cấp hiện tại và nền tảng</option><option value="current">Chỉ từ mới của '+courseName+'</option></select></label>')+
  '<label>Chế độ<select name="mode"><option value="mixed">Trộn câu hỏi</option><option value="new">Câu chưa làm</option><option value="wrong">Làm lại câu sai</option></select></label>'+
  '<label>Số câu<select name="count"><option>10</option><option>20</option><option>30</option><option>50</option></select></label></div>'+
  '<div><button type="submit" class="btn primary">Bắt đầu luyện '+svg('arrow')+'</button></div></form></section>'+
- '<section class="panel form-actions"><details><summary>Tra từ vựng HSK 2.0 · '+words.length+' mục</summary><div class="row wrap form-actions"><label for="vocab-search">Tìm từ</label>'+
+ '<section class="panel form-actions"><details><summary>Tra từ vựng · '+words.length+' mục</summary><div class="row wrap form-actions"><label for="vocab-search">Tìm từ</label>'+
  '<input id="vocab-search" type="search" placeholder="Hán tự, pinyin hoặc nghĩa"><small id="vocab-count" role="status">'+words.length+' từ</small></div>'+
  '<div class="table-wrap"><table class="table"><thead><tr><th>Hán tự</th><th>Pinyin</th><th>Nghĩa</th><th>Cấp</th></tr></thead><tbody>'+reviewWords+'</tbody></table></div>'+
- '<small>Phân cấp và pinyin từ <a href="https://github.com/drkameleon/complete-hsk-vocabulary" target="_blank" rel="noopener">Complete HSK Vocabulary</a> · <a href="./hsk-vocabulary-LICENSE.txt">MIT</a></small></details></section>';
+ (isWorkplace||isEdition30?'':'<small>Phân cấp và pinyin từ <a href="https://github.com/drkameleon/complete-hsk-vocabulary" target="_blank" rel="noopener">Complete HSK Vocabulary</a> · <a href="./hsk-vocabulary-LICENSE.txt">MIT</a></small>')+'</details></section>';
 }
 
 function practice(){
@@ -339,7 +380,7 @@ function quizPage(){
   const graded=quiz.answers.filter(a=>a.grade!==null),correct=graded.filter(a=>a.grade).length,wrong=graded.filter(a=>!a.grade);
   const skipped=quiz.answers.filter(a=>a.skipped).length;
   const breakdown=quiz.practicePaper?'<section class="stage-grid form-actions">'+practiceScores(quiz.practicePaper,quiz.answers).map(section=>'<article class="panel"><h3>'+esc(section.name)+'</h3><p>'+section.correct+'/'+section.graded+' đúng · '+section.total+' câu</p></article>').join('')+'</section>':quiz.final?'<section class="stage-grid form-actions">'+Object.entries(scoreSkills(quiz.answers)).map(([skill,v])=>'<article class="panel"><h3>'+lessonSkills[skill]+'</h3><p>'+v.correct+'/'+v.total+' đúng'+(v.skipped?' · '+v.skipped+' câu bỏ qua':'')+'</p></article>').join('')+'</section>':'';
-  return '<div class="quiz">'+heading('Kết quả lượt ôn',quiz.title)+'<section class="panel"><div class="result">'+(graded.length?correct+' / '+graded.length:'—')+'</div><p>'+(quiz.answers.length-skipped)+' câu đã luyện · '+wrong.length+' câu sai · '+(quiz.answers.length-graded.length-skipped)+' câu tự đối chiếu'+(skipped?' · '+skipped+' câu bỏ qua':'')+'</p><div class="wrap form-actions">'+button('Làm lại lượt này','redo','shuffle','primary')+(wrong.length?button('Làm lại câu sai','redo-wrong','target'):'')+(quiz.returnTo?button(quiz.returnTo.startsWith('exams/')?'Về kho đề':'Về bài học','go:'+quiz.returnTo,'book','primary'):button('Xem tiến độ','go:progress','chart'))+'</div></section>'+breakdown+(quiz.answers.some(a=>{const x=getQuestion(a.id);return x&&canPlay(x.audio??x.zh,x.pinyin)})?readerControls():'')+'<div class="stack form-actions">'+quiz.answers.map(a=>{const x=getQuestion(a.id);return x?'<section class="panel answer-review"><div class="wrap">'+badge(a.skipped?'Đã bỏ qua':a.grade===true?'Đúng':a.grade===false?'Cần ôn lại':'Tự đối chiếu')+'</div><h3 class="lines">'+esc(x.prompt)+'</h3><p>Bạn trả lời · '+esc(a.value||'—')+'</p><p>Đáp án · '+esc(x.reference??x.answers?.[0]??'Đối chiếu cùng giáo viên.')+'</p><p>'+esc(x.explanation)+'</p>'+(x.pinyin?'<p>'+esc(x.pinyin)+'</p>':'')+(x.zh?'<p class="han lines">'+esc(x.zh)+'</p>':'')+((x.audio||x.zh&&canPlay(x.zh,x.pinyin))?questionAudio(x,'Nghe lại'):'')+(x.vi?'<p>'+esc(x.vi)+'</p>':'')+'</section>':''}).join('')+'</div></div>';
+  return '<div class="quiz">'+heading('Kết quả lượt ôn',quiz.title)+'<section class="panel"><div class="result">'+(graded.length?correct+' / '+graded.length:'—')+'</div><p>'+(quiz.answers.length-skipped)+' câu đã luyện · '+wrong.length+' câu sai · '+(quiz.answers.length-graded.length-skipped)+' câu tự đối chiếu'+(skipped?' · '+skipped+' câu bỏ qua':'')+'</p><div class="wrap form-actions">'+button('Làm lại lượt này','redo','shuffle','primary')+(wrong.length?button('Làm lại câu sai','redo-wrong','target'):'')+(quiz.returnTo?button(quiz.returnTo.startsWith('exams/')?'Về kho đề':quiz.returnTo==='listening'?'Về kho luyện nghe':'Về bài học','go:'+quiz.returnTo,'book','primary'):button('Xem tiến độ','go:progress','chart'))+'</div></section>'+breakdown+(quiz.answers.some(a=>{const x=getQuestion(a.id);return x&&canPlay(x.audio??x.zh,x.pinyin)})?readerControls():'')+'<div class="stack form-actions">'+quiz.answers.map(a=>{const x=getQuestion(a.id);return x?'<section class="panel answer-review"><div class="wrap">'+badge(a.skipped?'Đã bỏ qua':a.grade===true?'Đúng':a.grade===false?'Cần ôn lại':'Tự đối chiếu')+'</div><h3 class="lines">'+esc(x.prompt)+'</h3><p>Bạn trả lời · '+esc(a.value||'—')+'</p><p>Đáp án · '+esc(x.reference??x.answers?.[0]??'Đối chiếu cùng giáo viên.')+'</p><p>'+esc(x.explanation)+'</p>'+(x.pinyin?'<p>'+esc(x.pinyin)+'</p>':'')+(x.zh?'<p class="han lines">'+esc(x.zh)+'</p>':'')+((x.audio||x.zh&&canPlay(x.zh,x.pinyin))?questionAudio(x,'Nghe lại'):'')+(x.vi?'<p>'+esc(x.vi)+'</p>':'')+'</section>':''}).join('')+'</div></div>';
  }
  const a=quiz.answers[quiz.index],opts=quiz.options[q.id],marked=state.marks[q.id];
  const chunks=quiz.chunks?.[q.id];
@@ -370,7 +411,11 @@ function teacher(){
 function render(){
  const [page='home',n,tab]=(location.hash.slice(1)||'home').split('/');
  chrome(page);
- $('app').innerHTML=({home,lessons:()=>heading(tr('Danh sách bài · '+courseName,'Lessons · '+courseName,'课程 · '+courseName),'Chọn bài để học theo chủ điểm và luyện các kỹ năng.')+'<div class="lessons">'+lessons.map(lessonCard).join('')+'</div>',lesson:()=>lessonPage(n,tab),bank,exams:()=>exams.page(n,tab),practice,quiz:quizPage,progress,review,teacher:viewer.admin?teacher:home}[page]??home)();
+ $('app').innerHTML=({home,lessons:lessonDirectory,lesson:()=>lessonPage(n,tab),bank,listening:workplaceListeningPage,exams:()=>exams.page(n,tab),practice,quiz:quizPage,progress,review,teacher:viewer.admin?teacher:home}[page]??home)();
+ if(page==='quiz'&&quiz&&!quiz.done){
+  const question=getQuestion(quiz.ids[quiz.index]);
+  if(question)syncProgress.recordView('questions',question.id);
+ }
 }
 function copyLink(value){
  const box=$('share-box');
@@ -438,6 +483,14 @@ function handle(action,trigger){
   case 'final':{
    const plan=assessmentPlan(l,canPlay,shuffle);
    start(plan,'Kiểm tra cuối bài '+l.n,plan.length,'exam',l.n);break;
+  }
+  case 'workplace-listen':{
+   if(!isWorkplace)break;
+   const subset=y?getLesson(y).questions:lessons.flatMap(lesson=>lesson.questions);
+   const dictation=x==='dictation';
+   const items=workplaceAudioQuestions(subset).filter(q=>dictation?!q.options?.length&&q.answers?.length:q.options?.length);
+   start(items,dictation?'Nghe chép chính tả':'Nghe và chọn đáp án',Math.min(items.length,10),'smart',null,y?'lesson/'+y+'/listen':'listening');
+   break;
   }
   case 'lesson-dictation':{
    const items=l.questions.filter(q=>q.kind===2&&q.audio&&!q.options&&q.answers?.length&&canPlay(q.audio,q.pinyin));
@@ -561,24 +614,25 @@ async function stillAllowed(){
   if(response.status===401){location.reload();return false}
   if(!response.ok)return false;
   const access=await response.json();
-  if(access.maxLevel<course){location.assign('/');return false}
-  if(access.maxLevel!==viewer.maxLevel){location.reload();return false}
+  if(isWorkplace?!access.tracks?.includes(track):access.maxLevel<course){location.assign('/');return false}
+  if(access.maxLevel!==viewer.maxLevel||JSON.stringify(access.tracks??[])!==JSON.stringify(viewer.tracks??[])){location.reload();return false}
   return true;
  }catch{return false}
 }
-syncProgress=await openProgress(course,()=>storage('progress',null),value=>persist('progress',value),()=>location.reload(),()=>notify('Chưa đồng bộ được tiến độ. Bản lưu trên thiết bị vẫn còn.'));
+syncProgress=await openProgress(courseId,()=>storage('progress',null),value=>persist('progress',value),()=>location.reload(),()=>notify('Chưa đồng bộ được tiến độ. Bản lưu trên thiết bị vẫn còn.'));
 state=syncProgress.state;
 window.addEventListener('focus',stillAllowed);
 setInterval(stillAllowed,30_000);
 setTimeout(stillAllowed,Math.min(2_147_000_000,Math.max(0,viewer.expiresAt-Date.now()+100)));
 try{
- const result=await fetch('/learning/'+course+'.json');
+ const result=await fetch('/learning/'+courseId+'.json');
  if(result.status===401||result.status===403){location.assign('/');throw new Error('Phiên học đã hết hạn.')}
  if(!result.ok)throw new Error('Nguồn dữ liệu không khả dụng.');
  catalog=await result.json();
  wordlist=catalog.wordlist;
  audioFiles=catalog.audioFiles;
- exams=createExamCenter({course,catalog:catalog.examCatalog,storage,persist,heading,esc,button,history:()=>state.history,save,render,go,requireAccess:stillAllowed,activePractice:()=>quiz&&!quiz.done?quiz.practicePaper?.id:null});
+ exams=createExamCenter({course,catalog:catalog.examCatalog,storage,persist,heading,esc,button,history:()=>state.history,save,render,go,requireAccess:stillAllowed,activePractice:()=>quiz&&!quiz.done?quiz.practicePaper?.id:null,
+  onExamPage:(id,page)=>syncProgress.recordView('examPages',id+':'+page)});
  document.title=courseName+' — Trung tâm ôn tập | FangSchool';refreshData();render();shared();
 }catch(err){chrome('home');$('app').innerHTML=heading('Chưa mở được học liệu',err.message)}
 

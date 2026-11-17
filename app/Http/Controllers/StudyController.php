@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\Access;
+use App\Services\LearnerReports;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -10,7 +11,7 @@ use Illuminate\Support\Facades\File;
 
 final class StudyController
 {
-    public function __construct(private readonly Access $access) {}
+    public function __construct(private readonly Access $access, private readonly LearnerReports $reports) {}
 
     public function home(Request $request)
     {
@@ -19,8 +20,24 @@ final class StudyController
             return $this->accessPage($this->access->ready() ? 'login' : 'setup');
         }
 
-        $level = $request->query('hsk', (string) min($user['maxLevel'], 2));
-        if (!is_string($level) || !preg_match('/^[1-4]$/D', $level) || (int) $level > $user['maxLevel']) {
+        $track = $request->query('track');
+        $edition = $request->query('edition');
+        $level = $request->query('hsk');
+        if ($track === null && $level === null && $edition === null && $user['maxLevel'] === 0) {
+            return redirect('/?'.http_build_query(['track' => $user['tracks'][0]] + $request->query()))
+                ->header('Cache-Control', 'no-store');
+        }
+
+        if ($track !== null) {
+            $course = is_string($track) && $level === null && $edition === null ? (Access::TRACKS[$track] ?? 0) : 0;
+        } else {
+            $level ??= (string) min(2, $user['maxLevel']);
+            $course = is_string($level) && preg_match('/^[1-4]$/D', $level) ? (int) $level : 0;
+            if ($edition !== null) {
+                $course = $edition === '3.0' && in_array($course, [1, 2], true) ? $course + 30 : 0;
+            }
+        }
+        if (!$this->access->canStudy($user, $course)) {
             return $this->accessPage('locked', 403);
         }
 
@@ -37,6 +54,48 @@ final class StudyController
         return $user['admin'] ? $this->accessPage('admin') : $this->denied();
     }
 
+    public function dashboard(Request $request)
+    {
+        $user = $this->access->identity($request, true);
+        if (!$user) {
+            return $this->accessPage($this->access->ready() ? 'login' : 'setup');
+        }
+
+        return $user['admin'] ? $this->accessPage('progress') : $this->denied();
+    }
+
+    public function overview(Request $request): JsonResponse
+    {
+        $user = $this->access->identity($request);
+        if (!$user || !$user['admin']) {
+            return $this->denied($user ? 403 : 401);
+        }
+
+        return response()->json($this->reports->overview())->header('Cache-Control', 'private, no-store');
+    }
+
+    public function learnerDetail(Request $request): JsonResponse
+    {
+        $user = $this->access->identity($request);
+        if (!$user || !$user['admin']) {
+            return $this->denied($user ? 403 : 401);
+        }
+        $email = $this->access->email($request->query('email'));
+        $level = $request->query('level');
+        if (!$this->access->validEmail($email) || !is_string($level) || !preg_match('/^'.Access::COURSE_PATTERN.'$/D', $level)) {
+            return response()->json(['error' => 'Chọn email học viên và khóa học hợp lệ.'], 400);
+        }
+        if (!DB::table('grants')->where('email', $email)->exists()
+            && !DB::table('workplace_grants')->where('email', $email)->exists()) {
+            return response()->json(['error' => 'Không tìm thấy học viên.'], 404);
+        }
+        $record = DB::table('learner_progress')->where(['email' => $email, 'level' => (int) $level])->first();
+        $state = $record ? json_decode($record->snapshot, flags: JSON_THROW_ON_ERROR) : null;
+
+        return response()->json(['email' => $email, 'level' => (int) $level, 'state' => $state])
+            ->header('Cache-Control', 'private, no-store');
+    }
+
     private function accessPage(string $mode, int $status = 200)
     {
         return response()->view('access', ['mode' => $mode], $mode === 'setup' ? 503 : $status)
@@ -50,25 +109,22 @@ final class StudyController
             return $this->denied($user ? 403 : 401);
         }
 
-        $grants = DB::table('grants');
         if ($request->isMethod('GET')) {
-            return response()->json($grants->orderBy('email')->get()->map(static fn (object $grant) => [
-                'email' => $grant->email, 'max_level' => (int) $grant->max_level,
-                'expires_at' => (int) $grant->expires_at, 'revoked' => (bool) $grant->revoked,
-            ]));
+            return response()->json(array_values($this->reports->learners()))->header('Cache-Control', 'private, no-store');
         }
 
         $email = $this->access->email($request->input('email'));
-        if (!$this->access->validEmail($email) || in_array($email, $this->access->admins(), true)) {
-            return response()->json(['error' => 'Vui lòng nhập email học viên hợp lệ.'], 400);
+        $scope = $request->input('scope', 'hsk');
+        if (!$this->access->validEmail($email) || in_array($email, $this->access->admins(), true)
+            || !in_array($scope, ['hsk', ...array_keys(Access::TRACKS)], true)) {
+            return response()->json(['error' => 'Chọn email học viên và phạm vi hợp lệ.'], 400);
         }
 
+        $hsk = $scope === 'hsk';
+        $key = $hsk ? ['email' => $email] : ['email' => $email, 'track' => $scope];
+        $table = DB::table($hsk ? 'grants' : 'workplace_grants');
         if ($request->isMethod('DELETE')) {
-            DB::transaction(function () use ($email, $grants): void {
-                $grants->where('email', $email)->update(['revoked' => true]);
-                DB::table('access_sessions')->where('email', $email)->delete();
-                DB::table('otp_challenges')->where('email', $email)->delete();
-            });
+            $table->where($key)->update(['revoked' => true]);
 
             return response()->json(['ok' => true]);
         }
@@ -76,12 +132,17 @@ final class StudyController
         $now = now()->getTimestampMs();
         $level = $request->input('maxLevel');
         $expiresAt = $request->input('expiresAt');
-        if (!in_array($level, [1, 2, 3, 4], true) || !is_int($expiresAt) || $expiresAt <= $now || $expiresAt > $now + 3650 * Access::DAY) {
-            return response()->json(['error' => 'Chọn cấp HSK và thời điểm hết hạn hợp lệ trong tương lai.'], 400);
+        if (!is_int($expiresAt) || $expiresAt <= $now || $expiresAt > $now + 3650 * Access::DAY) {
+            return response()->json(['error' => 'Chọn thời điểm hết hạn hợp lệ trong tương lai.'], 400);
         }
-
-        $grants->upsert([['email' => $email, 'max_level' => $level, 'expires_at' => $expiresAt, 'revoked' => false]],
-            ['email'], ['max_level', 'expires_at', 'revoked']);
+        if ($hsk && !in_array($level, [1, 2, 3, 4], true)) {
+            return response()->json(['error' => 'Chọn cấp HSK hợp lệ.'], 400);
+        }
+        $values = ['expires_at' => $expiresAt, 'revoked' => false];
+        if ($hsk) {
+            $values['max_level'] = $level;
+        }
+        $table->upsert([$key + $values], array_keys($key), array_keys($values));
 
         return response()->json(['ok' => true]);
     }
@@ -89,7 +150,7 @@ final class StudyController
     public function progress(Request $request, int $level): JsonResponse
     {
         $user = $this->access->identity($request);
-        if (!$user || $level > $user['maxLevel']) {
+        if (!$user || !$this->access->canStudy($user, $level)) {
             return $this->denied($user ? 403 : 401);
         }
 
@@ -112,10 +173,25 @@ final class StudyController
                 !is_object($state->marks ?? null) || !is_int($state->last ?? null)) {
                 return response()->json(['error' => 'Dữ liệu tiến độ không hợp lệ.'], 400);
             }
-            $snapshot = json_encode([
+            if (property_exists($state, 'views')) {
+                if (!$this->validViewMap($state->views->questions ?? null, 2500)
+                    || !$this->validViewMap($state->views->examPages ?? null, 1000, exam: true)) {
+                    return response()->json(['error' => 'Lịch sử xem không hợp lệ.'], 400);
+                }
+                $views = ['questions' => $state->views->questions, 'examPages' => $state->views->examPages];
+            } else {
+                $old = $revision > 0 ? (clone $table)->where($key)->value('snapshot') : null;
+                $stored = $old ? json_decode($old, flags: JSON_THROW_ON_ERROR) : null;
+                $views = $stored->views ?? null;
+            }
+            $content = [
                 'attempts' => $state->attempts, 'history' => $state->history, 'words' => $state->words,
                 'marks' => $state->marks, 'last' => $state->last,
-            ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+            ];
+            if ($views !== null) {
+                $content['views'] = $views;
+            }
+            $snapshot = json_encode($content, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
             $written = $revision === 0
                 ? $table->insertOrIgnore($key + ['snapshot' => $snapshot, 'revision' => 1])
                 : (clone $table)->where($key)->where('revision', $revision)->update(['snapshot' => $snapshot, 'revision' => $revision + 1]);
@@ -130,43 +206,67 @@ final class StudyController
         ], $status)->header('Cache-Control', 'private, no-store');
     }
 
+    private function validViewMap(mixed $items, int $limit, bool $exam = false): bool
+    {
+        if (!is_object($items) || count(get_object_vars($items)) > $limit) {
+            return false;
+        }
+        foreach ($items as $key => $time) {
+            $key = (string) $key;
+            if ($key === '' || strlen($key) > 640 || ($exam && !preg_match('/^[a-z0-9-]+:[0-9]{1,3}$/D', $key))
+                || !is_int($time) || $time <= 0 || $time > 8_640_000_000_000_000) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public function learning(Request $request, int $level)
     {
-        return $this->asset($request, 'learning/'.$level.'.json', $level, 'application/json; charset=utf-8');
+        $user = $this->access->identity($request);
+        if (!$user || !$this->access->canStudy($user, $level)) {
+            return $this->denied($user ? 403 : 401);
+        }
+
+        return $this->privateFile('learning/'.$level.'.json', 'application/json; charset=utf-8');
     }
 
     public function audio(Request $request, string $filename)
     {
-        $level = $this->assetLevel('audio', $filename);
-        return $this->asset($request, 'audio/'.$filename, $level, 'audio/mpeg');
+        return $this->media($request, 'audio', $filename, 'audio/mpeg');
     }
 
     public function exam(Request $request, string $filename)
     {
-        $level = $this->assetLevel('exams', $filename);
-        return $this->asset($request, 'exams/'.$filename, $level, str_ends_with($filename, '.pdf') ? 'application/pdf' : 'image/webp');
+        return $this->media($request, 'exams', $filename, str_ends_with($filename, '.pdf') ? 'application/pdf' : 'image/webp');
     }
 
-    private function assetLevel(string $type, string $filename): int
-    {
-        $manifest = File::json(storage_path('app/private/fangschool/manifest.json'));
-        return $manifest[$type][$filename] ?? 0;
-    }
-
-    private function asset(Request $request, string $file, int $level, string $mime)
+    private function media(Request $request, string $kind, string $filename, string $mime)
     {
         $user = $this->access->identity($request);
         if (!$user) {
             return $this->denied(401);
         }
 
-        $path = storage_path('app/private/fangschool/'.$file);
-        if ($level === 0 || !is_file($path)) {
+        $manifest = File::json(storage_path('app/private/fangschool/manifest.json'));
+        $level = $manifest[$kind][$filename] ?? null;
+        if ($level === null) {
             abort(404);
         }
-        if ($level > $user['maxLevel']) {
+
+        $tracks = $kind === 'audio' ? ($manifest['workplaceAudio'][$filename] ?? []) : [];
+        if ($level > $user['maxLevel'] && !array_intersect($tracks, $user['tracks'])) {
             return $this->denied();
         }
+
+        return $this->privateFile($kind.'/'.$filename, $mime);
+    }
+
+    private function privateFile(string $file, string $mime)
+    {
+        $path = storage_path('app/private/fangschool/'.$file);
+        abort_unless(is_file($path), 404);
 
         return response()->file($path, [
             'Content-Type' => $mime, 'Cache-Control' => 'private, no-store', 'X-Content-Type-Options' => 'nosniff',

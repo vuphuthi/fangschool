@@ -27,7 +27,7 @@ final class AuthController
             return response()->json(['error' => 'Bạn đã gửi quá nhiều yêu cầu. Hãy thử lại sau.'], 429);
         }
         $now = now()->getTimestampMs();
-        if (!in_array($email, $this->access->admins(), true) && !$this->access->grant($email, $now)) {
+        if (!in_array($email, $this->access->admins(), true) && !$this->access->hasLearningAccess($email, $now)) {
             return response()->json(['error' => 'Email này chưa có quyền nhận mã OTP. Vui lòng kiểm tra lại email hoặc liên hệ giáo viên FangSchool.'], 403);
         }
 
@@ -74,7 +74,7 @@ final class AuthController
             return $invalid();
         }
         $admin = in_array($email, $this->access->admins(), true);
-        if (!$admin && !$this->access->grant($email, $now)) {
+        if (!$admin && !$this->access->hasLearningAccess($email, $now)) {
             return $invalid();
         }
         $challenge = DB::table('otp_challenges')->where('email', $email)->first();

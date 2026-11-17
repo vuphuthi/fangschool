@@ -5,3 +5,5 @@
 /public/hot
 /database/*.sqlite
 /database/*.sqlite-*
+FangSchool-DuLieu/
+fangschool-backup.sqlite*
