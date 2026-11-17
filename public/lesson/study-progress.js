@@ -1,6 +1,7 @@
 import {sameOriginFetch as fetch} from '../request.js';
+import {blankStudy,mergeStudy} from './study-habits.js?v=1';
 const viewLimits={questions:2500,examPages:1000};
-const blank=()=>({attempts:[],words:{},marks:{},history:[],last:1,views:mergeViews()});
+const blank=()=>({attempts:[],words:{},marks:{},history:[],last:1,views:mergeViews(),study:blankStudy()});
 const copy=state=>structuredClone(state);
 const append=(remote,local)=>{
  const rows=new Map([...remote,...local].map(value=>[JSON.stringify(value),value]));
@@ -25,6 +26,7 @@ function merge(remote,local,base){
   attempts:append(remote.attempts,local.attempts),history:append(remote.history,local.history),
   words:{...remote.words,...changes(local.words,base.words)},marks:{...remote.marks,...changes(local.marks,base.marks)},
   views:mergeViews(remote.views,local.views),
+  study:mergeStudy(remote.study,local.study,base.study),
   last:local.last===base.last?remote.last:local.last
  };
 }

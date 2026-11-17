@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Services\Access;
 use App\Services\LearnerReports;
+use App\Services\SourceInventory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -62,6 +63,26 @@ final class StudyController
         }
 
         return $user['admin'] ? $this->accessPage('progress') : $this->denied();
+    }
+
+    public function sourcesPage(Request $request)
+    {
+        $user = $this->access->identity($request, true);
+        if (!$user) {
+            return $this->accessPage($this->access->ready() ? 'login' : 'setup');
+        }
+
+        return $user['admin'] ? $this->accessPage('sources') : $this->denied();
+    }
+
+    public function sources(Request $request, SourceInventory $inventory): JsonResponse
+    {
+        $user = $this->access->identity($request);
+        if (!$user || !$user['admin']) {
+            return $this->denied($user ? 403 : 401);
+        }
+
+        return response()->json($inventory->inventory())->header('Cache-Control', 'private, no-store');
     }
 
     public function overview(Request $request): JsonResponse
@@ -173,6 +194,15 @@ final class StudyController
                 !is_object($state->marks ?? null) || !is_int($state->last ?? null)) {
                 return response()->json(['error' => 'Dữ liệu tiến độ không hợp lệ.'], 400);
             }
+            $stored = false;
+            $previous = function () use (&$stored, $revision, $table, $key) {
+                if ($stored === false) {
+                    $old = $revision > 0 ? (clone $table)->where($key)->value('snapshot') : null;
+                    $stored = $old ? json_decode($old, flags: JSON_THROW_ON_ERROR) : null;
+                }
+
+                return $stored;
+            };
             if (property_exists($state, 'views')) {
                 if (!$this->validViewMap($state->views->questions ?? null, 2500)
                     || !$this->validViewMap($state->views->examPages ?? null, 1000, exam: true)) {
@@ -180,9 +210,15 @@ final class StudyController
                 }
                 $views = ['questions' => $state->views->questions, 'examPages' => $state->views->examPages];
             } else {
-                $old = $revision > 0 ? (clone $table)->where($key)->value('snapshot') : null;
-                $stored = $old ? json_decode($old, flags: JSON_THROW_ON_ERROR) : null;
-                $views = $stored->views ?? null;
+                $views = $previous()->views ?? null;
+            }
+            if (property_exists($state, 'study')) {
+                if (!$this->validStudy($state->study)) {
+                    return response()->json(['error' => 'Dữ liệu thói quen học không hợp lệ.'], 400);
+                }
+                $study = ['goal' => $state->study->goal, 'days' => $state->study->days, 'srs' => $state->study->srs];
+            } else {
+                $study = $previous()->study ?? null;
             }
             $content = [
                 'attempts' => $state->attempts, 'history' => $state->history, 'words' => $state->words,
@@ -190,6 +226,9 @@ final class StudyController
             ];
             if ($views !== null) {
                 $content['views'] = $views;
+            }
+            if ($study !== null) {
+                $content['study'] = $study;
             }
             $snapshot = json_encode($content, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
             $written = $revision === 0
@@ -215,6 +254,33 @@ final class StudyController
             $key = (string) $key;
             if ($key === '' || strlen($key) > 640 || ($exam && !preg_match('/^[a-z0-9-]+:[0-9]{1,3}$/D', $key))
                 || !is_int($time) || $time <= 0 || $time > 8_640_000_000_000_000) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** Mục tiêu phút/ngày, số phút theo ngày và lịch ôn thẻ (lặp lại ngắt quãng). */
+    private function validStudy(mixed $study): bool
+    {
+        if (!is_object($study) || !in_array($study->goal ?? null, [10, 20, 30], true)
+            || !is_object($study->days ?? null) || !is_object($study->srs ?? null)
+            || count(get_object_vars($study->days)) > 400 || count(get_object_vars($study->srs)) > 5000) {
+            return false;
+        }
+        foreach ($study->days as $day => $minutes) {
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/D', (string) $day) || !is_int($minutes) || $minutes < 0 || $minutes > 1440) {
+                return false;
+            }
+        }
+        foreach ($study->srs as $word => $card) {
+            $word = (string) $word;
+            if ($word === '' || strlen($word) > 160 || !is_object($card)
+                || !is_int($card->due ?? null) || !is_int($card->at ?? null) || !is_int($card->step ?? null)
+                || $card->step < 1 || $card->step > 365 || $card->due <= 0 || $card->at <= 0
+                || (property_exists($card, 'first') && $card->first !== true)
+                || count(get_object_vars($card)) > 4) {
                 return false;
             }
         }

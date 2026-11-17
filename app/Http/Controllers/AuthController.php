@@ -48,8 +48,8 @@ final class AuthController
             Http::withToken(config('fangschool.resend_key'))->timeout(10)->acceptJson()
                 ->post('https://api.resend.com/emails', [
                     'from' => config('fangschool.mail_from'), 'to' => [$email],
-                    'subject' => 'Mã đăng nhập FangSchool', 'html' => view('otp', ['code' => $code])->render(),
-                    'text' => "Mã đăng nhập FangSchool\n\n{$code}\n\nMã có hiệu lực trong 10 phút. Vui lòng giữ mã riêng tư. Nếu bạn không yêu cầu mã, hãy bỏ qua email này.",
+                    'subject' => 'Mã đăng nhập FangSchool', 'html' => view('otp', ['code' => $code, 'email' => $email])->render(),
+                    'text' => "Mã đăng nhập FangSchool\n\nMã của bạn: {$code}\n\nMã có hiệu lực 10 phút và chỉ dùng được một lần.\nEmail đăng nhập: {$email}\n\nNếu bạn không yêu cầu đăng nhập, hãy bỏ qua email này.\nKhông chia sẻ mã cho bất kỳ ai.\n\nFangSchool",
                 ])->throw();
         } catch (\Exception) {
             DB::table('otp_challenges')->where('email', $email)->where('id', $id)->delete();

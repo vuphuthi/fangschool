@@ -97,6 +97,10 @@ final class Access
             'tracks' => $admin ? array_keys(self::TRACKS) : $workplace->pluck('track')->all(),
             'expiresAt' => $admin ? $expiresAt : min($expiresAt, max((int) ($grant->expires_at ?? 0), (int) $workplace->max('expires_at'))),
             'admin' => $admin,
+            'grants' => $admin ? [] : array_values(array_filter([
+                $grant ? ['kind' => 'hsk', 'maxLevel' => (int) $grant->max_level, 'expiresAt' => (int) $grant->expires_at] : null,
+                ...$workplace->map(fn ($row) => ['kind' => 'track', 'track' => $row->track, 'expiresAt' => (int) $row->expires_at])->all(),
+            ])),
         ];
     }
 

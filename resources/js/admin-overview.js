@@ -56,21 +56,16 @@ export function initProgressDashboard(api,openReport){
  function overview(data){
   const now=Date.now(),graded=data.totals.correct+data.totals.incorrect;
   const boxes=[
-   [count(data.learners.filter(x=>active(x,now)||Object.values(x.workplace??{}).some(grant=>active(grant,now))).length),'Đang có quyền học'],
-   [count(data.learners.filter(x=>x.studied).length),'Học viên có tiến độ'],
-   [count(data.learners.filter(x=>x.last_at>=now-7*86400000&&x.last_at<=now).length),'Hoạt động 7 ngày qua'],
-   [count(data.totals.attempts),'Lượt trả lời'],
-   [count(data.totals.questions_viewed),'Câu đã xem'],
-   [count(data.totals.exams_viewed),'Đề đã mở'],
-   [graded?Math.round(data.totals.correct*100/graded)+'%':'—','Tỷ lệ đúng chung'],
-   [count(data.totals.exams),'Lượt nộp đề']
+   [count(data.learners.filter(x=>x.last_at>=now-7*86400000&&x.last_at<=now).length)+' / '+count(data.learners.length),'Học trong 7 ngày'],
+   [count(data.totals.questions_viewed)+' · '+count(data.totals.attempts),'Câu đã xem · đã trả lời'],
+   [graded?Math.round(data.totals.correct*100/graded)+'%':'—','Tỷ lệ đúng (câu chấm tự động)'],
+   [count(data.totals.exams_viewed)+' · '+count(data.totals.exams),'Đề đã mở · đã nộp']
   ];
   stats.replaceChildren(...boxes.map(([value,label])=>{
-   const card=element('div',undefined,'report-stat');
-   card.append(element('strong',value),element('small',label));
+   const card=element('div',undefined,'stat'),body=element('div');
+   body.append(element('strong',value),element('small',label));card.append(body);
    return card;
   }));
-  const heading=element('h3','Hoạt động theo khóa học');
   const grid=element('div',undefined,'admin-level-grid');
   for(const item of data.levels){
    const card=element('article',undefined,'admin-level');
@@ -84,31 +79,44 @@ export function initProgressDashboard(api,openReport){
     element('small','Tỷ lệ đúng · '+(graded?Math.round(100*item.correct/graded)+'%':'—')));
    grid.append(card);
   }
-  levels.replaceChildren(heading,grid);
+  levels.replaceChildren(grid);
  }
 
- function renderList(){
+ const scopeLabels=learner=>[...(learner.max_level?['HSK 1'+(learner.max_level>1?'–'+learner.max_level:'')]:[]),
+  ...Object.entries(trackKey).filter(([,key])=>learner.workplace?.[key]).map(([id])=>courseName(id))];
+ function learnerState(learner,now){
+  const any=active(learner,now)||Object.values(learner.workplace??{}).some(grant=>active(grant,now));
+  if(!any)return ['Không còn quyền','bad'];
+  if(learner.last_at>=now-7*86400000)return ['Đang học','ok'];
+  return learner.studied?['Tạm nghỉ','warn']:['Chưa học','muted'];
+ }
+ function filteredRows(){
   const term=search.value.trim().toLowerCase(),max=Number(filter.value);
-  const rows=learners.filter(learner=>learner.email.includes(term)&&(!max||(trackKey[max]?Object.hasOwn(learner.workplace??{},trackKey[max]):learner.max_level===max)));
-  const size=12,last=Math.max(0,Math.ceil(rows.length/size)-1);
+  return learners.filter(learner=>learner.email.includes(term)&&(!max||(trackKey[max]?Object.hasOwn(learner.workplace??{},trackKey[max]):learner.max_level===max)));
+ }
+ function renderList(){
+  const rows=filteredRows();
+  const size=15,last=Math.max(0,Math.ceil(rows.length/size)-1);
   page=Math.min(page,last);
   const root=document.createDocumentFragment(),now=Date.now();
   const buttons=new Map();
-  if(!rows.length){root.append(element('p',learners.length?'Không tìm thấy email phù hợp.':'Chưa có học viên được cấp quyền.'))}
-  for(const learner of rows.slice(page*size,(page+1)*size)){
-   const row=element('article',undefined,'grant-row');
-   const identity=element('div'),activity=element('div',undefined,'learner-activity');
-   identity.append(element('strong',learner.email));
-   const scopes=[...(learner.max_level?[[learner,'HSK tối đa '+learner.max_level]]:[]),
-    ...Object.entries(trackKey).filter(([,key])=>learner.workplace?.[key]).map(([id,key])=>[learner.workplace[key],courseName(id)])];
-   for(const [grant,label] of scopes)identity.append(element('small',label+' · '+(active(grant,now)?'Đang hoạt động':grant.revoked?'Đã thu hồi':'Đã hết hạn')));
-   activity.append(element('span',count(learner.questions_viewed)+' câu đã xem · '+count(learner.exams_viewed)+' đề đã mở'),
-    element('small',count(learner.attempts)+' lượt trả lời · '+count(learner.exams)+' lượt nộp đề'),
-    element('small','Gần nhất '+(learner.last_at?date.format(learner.last_at):'chưa ghi nhận')));
-   const button=element('button','Xem tiến độ','btn');button.type='button';
-   button.addEventListener('click',()=>openReport(learner,button));
-   buttons.set(learner.email,button);
-   row.append(identity,activity,button);root.append(row);
+  if(!rows.length){root.append(element('p',learners.length?'Không có học viên nào khớp bộ lọc.':'Chưa có học viên được cấp quyền.'))}
+  else{
+   const wrap=element('div',undefined,'table-wrap'),table=element('table',undefined,'table'),head=element('thead'),body=element('tbody'),tr=element('tr');
+   for(const label of ['Học viên','Khóa có quyền','Câu xem / trả lời','Lượt nộp đề','Đề đã mở','Hoạt động gần nhất',''])tr.append(Object.assign(element('th',label),{scope:'col'}));
+   head.append(tr);table.append(head,body);wrap.append(table);root.append(wrap);
+   for(const learner of rows.slice(page*size,(page+1)*size)){
+    const row=element('tr'),who=element('td'),[state,k]=learnerState(learner,now);
+    const badge=element('span',state,'badge');badge.dataset.k=k;
+    who.append(element('strong',learner.email,'email-cell'),element('br'),badge);
+    const button=element('button','Mở báo cáo','btn');button.type='button';
+    button.addEventListener('click',()=>openReport(learner,button));
+    buttons.set(learner.email,button);
+    const action=element('td');action.append(button);
+    row.append(who,element('td',scopeLabels(learner).join(', ')||'—'),element('td',count(learner.questions_viewed)+' / '+count(learner.attempts)),
+     element('td',count(learner.exams)),element('td',count(learner.exams_viewed)),element('td',learner.last_at?date.format(learner.last_at):'Chưa ghi nhận','muted'),action);
+    body.append(row);
+   }
   }
   if(last>0){
    const navigation=element('div',undefined,'wrap report-pages');
@@ -121,6 +129,14 @@ export function initProgressDashboard(api,openReport){
   }
   list.replaceChildren(root);
   return buttons;
+ }
+ function exportCsv(){
+  const now=Date.now(),cellText=value=>'"'+String(value).replace(/"/g,'""')+'"';
+  const lines=[['Email','Trạng thái','Khóa có quyền','Câu đã xem','Lượt trả lời','Đề đã mở','Lượt nộp đề','Hoạt động gần nhất'].map(cellText).join(',')];
+  for(const learner of filteredRows())lines.push([learner.email,learnerState(learner,now)[0],scopeLabels(learner).join('; '),learner.questions_viewed,learner.attempts,learner.exams_viewed,learner.exams,learner.last_at?date.format(learner.last_at):''].map(cellText).join(','));
+  const url=URL.createObjectURL(new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'}));
+  const link=Object.assign(document.createElement('a'),{href:url,download:'fangschool-tien-do-'+new Date().toISOString().slice(0,10)+'.csv'});
+  document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
  }
 
  async function refresh(){
@@ -146,5 +162,6 @@ export function initProgressDashboard(api,openReport){
  search.addEventListener('input',applyFilter);
  filter.addEventListener('change',applyFilter);
  reload.addEventListener('click',refresh);
+ byId('export-csv')?.addEventListener('click',exportCsv);
  void refresh();
 }

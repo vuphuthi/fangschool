@@ -27,7 +27,7 @@ function table(headers,items,fields){
  const body=grid.createTBody();
  for(const item of items){
   const tr=body.insertRow();
-  for(const value of fields(item)){const td=tr.insertCell();td.textContent=value}
+  for(const value of fields(item)){const td=tr.insertCell();if(value instanceof Node)td.append(value);else td.textContent=value}
  }
  const wrap=node('div',undefined,'table-wrap');wrap.append(grid);
  return wrap;
@@ -58,7 +58,7 @@ function pagedList(items,headers,fields,empty,filter){
  if(filter){
   const label=node('label','Kết quả', 'report-filter');
   const select=node('select');
-  for(const [key,text] of [['all','Tất cả'],['wrong','Sai'],['correct','Đúng'],['review','Tự đối chiếu']]){
+  for(const [key,text] of [['all','Tất cả'],['wrong','Sai'],['correct','Đúng'],['review','Tự đối chiếu'],['viewed','Đã xem, chưa trả lời']].filter(([key])=>key!=='viewed'||items.some(item=>filter(item)==='viewed'))){
    const option=node('option',text);option.value=key;select.append(option);
   }
   select.addEventListener('change',()=>{
@@ -164,68 +164,132 @@ function summarize(state,catalog){
  return {lessons,questionById,wordById,paperById,attempts,history,words,known,correct,incorrect,complete,maxActivity,byLesson,bySkill,viewed};
 }
 
+const badge=(text,k)=>{const el=node('span',text,'badge');el.dataset.k=k;return el};
+const percent=(a,b)=>b?Math.round(100*a/b):0;
+const scaledScore=item=>rows(item.sections).reduce((sum,section)=>sum+percent(integer(section.correct),integer(section.graded??section.total)),0);
+function stack(...children){const el=node('div',undefined,'cell-stack');for(const child of children)if(child!==null&&child!==undefined)el.append(child);return el}
+function bar(value){const outer=node('div',undefined,'bar thin'),inner=node('i');inner.style.width=value+'%';outer.append(inner);return outer}
+
+function tabbed(definitions){
+ const wrapper=node('div',undefined,'report-tabs'),strip=node('div',undefined,'segmented'),panel=node('div',undefined,'report-tab-panel');
+ strip.setAttribute('role','tablist');strip.setAttribute('aria-label','Phần báo cáo');
+ const buttons=definitions.map(([label,build],index)=>{
+  const button=node('button',label,'btn');button.type='button';button.setAttribute('role','tab');
+  button.addEventListener('click',()=>select(index));
+  return button;
+ });
+ function select(index){
+  buttons.forEach((button,i)=>button.setAttribute('aria-selected',String(i===index)));
+  panel.replaceChildren(definitions[index][1]());
+ }
+ strip.append(...buttons);wrapper.append(strip,panel);select(0);
+ return wrapper;
+}
+
+function questionRows(report){
+ const latest=new Map(),counts=new Map();
+ for(const attempt of [...report.attempts].reverse()){latest.set(attempt.id,attempt);counts.set(attempt.id,(counts.get(attempt.id)??0)+1)}
+ const items=new Map();
+ for(const view of report.viewed.questions)items.set(view.id,{id:view.id,at:view.at});
+ for(const [id,attempt] of latest){const item=items.get(id)??{id,at:0};item.at=Math.max(item.at,validTime(attempt.at));item.attempt=attempt;items.set(id,item)}
+ return [...items.values()].map(item=>({...item,count:counts.get(item.id)??0})).sort(newest);
+}
+const questionState=item=>!item.attempt?['Đã xem, chưa trả lời','muted','viewed']:item.attempt.grade===true?['Đúng','ok','correct']:item.attempt.grade===false?['Sai','bad','wrong']:['Tự đối chiếu','warn','review'];
+
+function examRows(report){
+ const byId=new Map(report.viewed.exams.map(item=>[item.id,{...item}]));
+ for(const item of report.history.filter(entry=>entry.examCode)){
+  const row=byId.get(item.examCode)??{id:item.examCode,at:0,pages:new Set(),submitted:true};
+  row.at=Math.max(row.at,validTime(item.at));row.submitted=true;
+  if(!row.best||scaledScore(item)>scaledScore(row.best))row.best=item;
+  row.attempts=(row.attempts??0)+1;
+  byId.set(item.examCode,row);
+ }
+ return [...byId.values()].sort(newest);
+}
+
+function lessonGrid(report){
+ const wrap=node('div',undefined,'report-grid-wrap'),grid=node('div',undefined,'lesson-grid');
+ for(const lesson of report.lessons){
+  const item=report.byLesson.get(lesson.n),total=rows(lesson.questions).filter(q=>!q.resource).length;
+  const done=report.complete.has(lesson.n),started=Boolean(item?.ids.size),missing=!total&&!rows(lesson.vocab).length;
+  const cell=node('div',lesson.n>=100?'Â'+(lesson.n-100):String(lesson.n),'lesson-cell '+(missing?'missing':done?'done':started?'doing':''));
+  const tip=labelFor(lesson.n)+' · '+str(lesson.vi,str(lesson.zh))+' · '+(missing?'chưa có học liệu':done?'đã nộp kiểm tra cuối bài':started?number(item.ids.size)+'/'+number(total)+' câu đã luyện':'chưa học');
+  cell.title=tip;cell.setAttribute('aria-label',tip);cell.setAttribute('role','img');
+  grid.append(cell);
+ }
+ wrap.append(grid,node('small','Đậm: đã nộp kiểm tra cuối bài · viền: đang học · xám: chưa học · gạch chéo: chưa có học liệu','muted'));
+ return wrap;
+}
+
 function render(state,catalog){
  const result=document.createDocumentFragment();
  const report=summarize(state,catalog);
- const {lessons,byLesson,bySkill,attempts,history,complete,questionById,wordById,paperById}=report;
+ const {lessons,byLesson,attempts,history,complete,questionById,wordById,paperById}=report;
  const graded=report.correct+report.incorrect;
  const exams=history.filter(item=>item.examCode||item.practicePaper);
- const stats=node('div',undefined,'report-stats');
+ const stats=node('div',undefined,'admin-stats report-cards');
  for(const [value,label] of [
-  [number(attempts.length),'Lượt trả lời'],
-  [number(report.correct)+' đúng · '+number(report.incorrect)+' sai','Câu có chấm điểm'],
-  [graded?Math.round(100*report.correct/graded)+'%':'—','Tỷ lệ đúng'],
-  [number(report.viewed.questions.length),'Câu đã xem'],
-  [number(report.viewed.exams.length),'Đề đã mở'],
-  [number(report.known)+' thuộc · '+number(report.words.length-report.known)+' cần ôn','Từ vựng'],
-  [number(exams.length),'Lượt nộp đề']
+  [number(complete.size)+'/'+number(lessons.filter(lesson=>lesson.n<100).length),'Bài đã nộp kiểm tra cuối bài'],
+  [number(report.viewed.questions.length)+' · '+number(attempts.length),'Câu đã xem · đã trả lời'],
+  [graded?Math.round(100*report.correct/graded)+'%':'—','Tỷ lệ đúng · '+number(report.correct)+' đúng / '+number(report.incorrect)+' sai'],
+  [number(report.viewed.exams.length)+' · '+number(exams.length),'Đề đã mở · đã nộp'],
+  [number(report.known)+' · '+number(report.words.length-report.known),'Từ đã thuộc · cần ôn']
  ]){
-  const card=node('div',undefined,'report-stat');card.append(node('strong',value),node('small',label));stats.append(card);
+  const card=node('div',undefined,'stat'),body=node('div');body.append(node('strong',value),node('small',label));card.append(body);stats.append(card);
  }
  result.append(stats);
  const last=lessons.find(lesson=>lesson.n===state.last);
  result.append(node('p','Hoạt động gần nhất · '+dateText(report.maxActivity)+(last?' · Mở gần nhất '+labelFor(last.n):''),'report-meta'));
- if(lessons.length){
-  addGroup(result,'Tiến độ theo bài',table(['Bài học','Câu đã luyện','Tỷ lệ đúng','Kiểm tra cuối bài'],lessons,lesson=>{
-   const item=byLesson.get(lesson.n),total=rows(lesson.questions).filter(q=>!q.resource).length;
-   return [labelFor(lesson.n)+' · '+str(lesson.vi,str(lesson.zh)),number(item?.ids.size)+'/'+number(total),
-    item?.graded?Math.round(100*item.correct/item.graded)+'%':'—',complete.has(lesson.n)?'Đã nộp':'Chưa nộp'];
-  }),true);
+
+ const courses=node('div',undefined,'report-courses');
+ for(const lesson of lessons){
+  const item=byLesson.get(lesson.n),total=rows(lesson.questions).filter(q=>!q.resource).length,done=integer(item?.ids.size);
+  const line=number(done)+'/'+number(total)+' câu'+(item?.graded?' · '+percent(item.correct,item.graded)+'% đúng':'')+(complete.has(lesson.n)?' · đã nộp kiểm tra':'');
+  const row=node('div',undefined,'report-course');
+  const head=node('div',undefined,'row split');head.append(node('strong',labelFor(lesson.n)+' · '+str(lesson.zh,str(lesson.vi))),node('small',line,'muted'));
+  row.append(head,bar(percent(done,total)));courses.append(row);
  }
- if(bySkill.size){
-  const ordered=[...bySkill].sort(([,a],[,b])=>a.correct/a.graded-b.correct/b.graded);
-  addGroup(result,'Kết quả theo kỹ năng',table(['Kỹ năng','Đúng','Sai','Tỷ lệ đúng'],ordered,([label,item])=>[
-   label,number(item.correct),number(item.graded-item.correct),Math.round(100*item.correct/item.graded)+'%'
-  ]));
- }
- addGroup(result,'Lịch sử kiểm tra và làm đề · '+number(history.length),
-  pagedList(history,['Bài hoặc đề','Điểm','Chi tiết theo phần','Thời điểm'],item=>{
-   const parts=rows(item.sections).map(section=>str(section.name)+' '+number(section.correct)+'/'+number(section.graded??section.total));
-   if(!parts.length)for(const [key,skill] of records(item.skills))if(skill&&typeof skill==='object')parts.push((explicitSkills[key]??key)+' '+number(skill.correct)+'/'+number(skill.total));
-   return [str(item.title,str(paperById.get(item.examCode)?.title)),integer(item.graded)?number(item.correct)+'/'+number(item.graded):'Tự đối chiếu',parts.join(' · ')||'—',dateText(item.at)];
-  },'Chưa nộp lượt ôn hoặc bài kiểm tra nào.'));
- const responseView=examResponses(history,paperById);
- if(responseView)addGroup(result,'Phiếu trả lời từng đề',responseView);
- addGroup(result,'Đề ôn thi đã mở · '+number(report.viewed.exams.length),
-  pagedList(report.viewed.exams,['Đề','Trang đã mở','Trạng thái','Mở gần nhất'],item=>{
-   const paper=paperById.get(item.id),pages=paper?.pages?.length;
-   return [str(paper?.title,item.id),number(item.pages.size)+(pages?'/'+number(pages):''),
-    item.submitted?'Đã nộp đề':'Chưa nộp đề',dateText(item.at)];
-  },'Chưa có lượt mở đề được ghi nhận.'));
- addGroup(result,'Câu đã xem · '+number(report.viewed.questions.length),
-  pagedList(report.viewed.questions,['Câu hỏi','Trạng thái','Xem gần nhất'],item=>[
-   str(questionById.get(item.id)?.prompt,item.id),item.answered?'Đã trả lời':'Chưa trả lời',dateText(item.at)
-  ],'Chưa có câu đã xem được ghi nhận.'));
- addGroup(result,'Chi tiết câu đã trả lời · '+number(attempts.length),
-  pagedList(attempts,['Câu hỏi','Đã trả lời','Kết quả','Thời điểm'],attempt=>{
-   const q=questionById.get(attempt.id);
-   return [str(q?.prompt,attempt.id),str(attempt.value),statusLabels[typeof attempt.grade==='boolean'?attempt.grade:null],dateText(attempt.at)];
-  },'Chưa có câu trả lời cho bộ lọc này.',attempt=>attempt.grade===true?'correct':attempt.grade===false?'wrong':'review'));
- addGroup(result,'Từ vựng đã đánh dấu · '+number(report.words.length),
-  pagedList([...report.words].sort((a,b)=>a[1].localeCompare(b[1])),['Từ','Pinyin','Nghĩa','Trạng thái'],([id,status])=>{
+ if(lessons.length)result.append(courses);
+
+ result.append(tabbed([
+  ['Câu hỏi',()=>{
+   const items=questionRows(report);
+   return pagedList(items,['Nội dung câu hỏi','Khóa · bài','Gần nhất','Số lần trả lời','Trạng thái'],item=>{
+    const q=questionById.get(item.id),[label,k]=questionState(item);
+    const kind=q?(explicitSkills[q.skill]??skillNames[q.kind]??''):'';
+    return [stack(node('span',str(q?.prompt,item.id).replace(/\n/g,' ').slice(0,140)),q?.zh?node('small',q.zh,'muted han'):null,kind?node('small',kind,'muted'):null),
+     q?.origin==='bank'?'Theo cấp HSK':Number.isInteger(q?.lesson)?labelFor(q.lesson):'—',dateText(item.at),number(item.count),badge(label,k)];
+   },'Chưa có câu đã xem hoặc đã trả lời.',item=>questionState(item)[2]);
+  }],
+  ['Đề',()=>{
+   const items=examRows(report);
+   return pagedList(items,['Đề','Mở gần nhất','Đã xem tới','Trạng thái'],item=>{
+    const paper=paperById.get(item.id),pages=paper?.pages?.length,max=Array.isArray(paper?.sections)?paper.sections.length*100:0;
+    const score=item.best?scaledScore(item.best):null;
+    return [stack(node('strong',str(paper?.title,item.id)),item.attempts?node('small',number(item.attempts)+' lượt nộp','muted'):null),dateText(item.at),
+     item.pages.size?number(item.pages.size)+(pages?'/'+number(pages):'')+' trang':'—',
+     item.submitted?badge('Đã nộp'+(score!==null&&max?' · '+score+'/'+max:''),score!==null&&max&&score>=max*0.6?'ok':'warn'):badge('Đã mở, chưa nộp','muted')];
+   },'Chưa có lượt mở đề được ghi nhận.');
+  }],
+  ['Lưới bài',()=>lessonGrid(report)],
+  ['Lịch sử & phiếu trả lời',()=>{
+   const box=node('div',undefined,'cell-stack');
+   box.append(pagedList(history,['Bài hoặc đề','Điểm','Chi tiết theo phần','Thời điểm'],item=>{
+    const parts=rows(item.sections).map(section=>str(section.name)+' '+number(section.correct)+'/'+number(section.graded??section.total));
+    if(!parts.length)for(const [key,skill] of records(item.skills))if(skill&&typeof skill==='object')parts.push((explicitSkills[key]??key)+' '+number(skill.correct)+'/'+number(skill.total));
+    const p=percent(integer(item.correct),integer(item.graded));
+    return [str(item.title,str(paperById.get(item.examCode)?.title)),integer(item.graded)?badge(number(item.correct)+'/'+number(item.graded),p>=80?'ok':p>=50?'warn':'bad'):badge('Tự đối chiếu','muted'),parts.join(' · ')||'—',dateText(item.at)];
+   },'Chưa nộp lượt ôn hoặc bài kiểm tra nào.'));
+   const responseView=examResponses(history,paperById);
+   if(responseView){box.append(node('h3','Phiếu trả lời từng đề'),responseView)}
+   return box;
+  }],
+  ['Từ vựng',()=>pagedList([...report.words].sort((a,b)=>a[1].localeCompare(b[1])),['Từ','Pinyin','Nghĩa','Trạng thái'],([id,status])=>{
    const word=wordById.get(id);
-   return [str(word?.zh,id),str(word?.pinyin),str(word?.vi),status==='known'?'Đã thuộc':'Cần ôn lại'];
-  },'Chưa có từ vựng được đánh dấu.'));
+   return [str(word?.zh,id),str(word?.pinyin),str(word?.vi),badge(status==='known'?'Đã thuộc':'Cần ôn lại',status==='known'?'ok':'warn')];
+  },'Chưa có từ vựng được đánh dấu.')]
+ ]));
  return result;
 }
 
