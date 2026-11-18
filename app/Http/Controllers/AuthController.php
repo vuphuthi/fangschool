@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\Access;
+use App\Services\WorkersAi;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -99,7 +100,7 @@ final class AuthController
     {
         $user = $this->access->identity($request, true);
 
-        return $user ? response()->json($user) : response()->json(['error' => 'Bạn cần xác thực email còn quyền truy cập.'], 401);
+        return $user ? response()->json([...$user, 'aiAvailable' => WorkersAi::ready()])->header('Cache-Control', 'private, no-store') : response()->json(['error' => 'Bạn cần xác thực email còn quyền truy cập.'], 401);
     }
 
     public function logout(Request $request): JsonResponse
