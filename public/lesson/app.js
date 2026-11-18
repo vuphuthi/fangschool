@@ -1,3 +1,4 @@
+import {createTutorChat} from './tutor-chat.js';
 import {sameOriginFetch as fetch} from '../request.js';
 import {createExamCenter} from './exams.js?v=12';
 import {openProgress} from './study-progress.js?v=3';
@@ -71,9 +72,10 @@ const navs=[['home','home'],['lessons','book'],['bank','target'],['listening','h
 function chrome(page){
  document.documentElement.dataset.theme=settings.theme;
  document.documentElement.lang=settings.lang==='zh'?'zh-CN':settings.lang;
- const title=k=>isWorkplace&&k==='bank'?'Ngân hàng luyện tập':tr(...(names[k]??names.home));
+ const title=k=>k==='chat'?tr('Hỏi AI','Ask AI','AI 助教'):isWorkplace&&k==='bank'?'Ngân hàng luyện tập':tr(...(names[k]??names.home));
  $('sidebar').innerHTML='<div class="brand"><span class="brand-mark">'+svg('book')+'</span><span>Fang<em>School</em></span></div><div class="nav-label">'+tr('HỌC TẬP','STUDY','学习')+'</div>'+
  navs.filter(([k])=>k!=='exams'&&k!=='listening'||k==='exams'&&catalog?.examCatalog||k==='listening'&&isWorkplace).map(([k,i])=>'<button class="nav '+((page===k||(page==='lesson'&&k==='lessons'))?'active':'')+'" data-action="go:'+k+'">'+svg(i)+esc(title(k))+'</button>').join('')+
+ (tutor?'<button class="nav '+(page==='chat'?'active':'')+'" data-action="go:chat">'+svg('text')+esc(title('chat'))+'</button>':'')+
  (viewer.admin?'<div class="nav-label">QUẢN LÝ</div><a class="nav" href="/admin">'+svg('teacher')+'Quyền truy cập</a><a class="nav" href="/admin/progress">'+svg('chart')+'Tiến độ học viên</a><a class="nav" href="/admin/sources">'+svg('text')+'Nguồn học liệu</a><button class="nav '+(page==='teacher'?'active':'')+'" data-action="go:teacher">'+svg('book')+esc(title('teacher'))+'</button>':'')+
  '<div class="side-foot side-user"><div class="row"><span class="avatar" aria-hidden="true">'+esc((viewer.email[0]||'?').toUpperCase())+'</span><div class="grow"><b>'+esc(viewer.email)+'</b><small>'+(viewer.admin?'Quản trị viên':'Học viên')+'</small></div></div>'+button('Đăng xuất','logout')+'</div>';
 
@@ -798,10 +800,33 @@ function createShare(formEl){
  render();copyLink(u.href);
 }
 
+const tutor=viewer.aiAvailable?createTutorChat({
+ courseId,courseName,
+ lessonAt:hash=>{
+  const [screen,n]=hash.split('/');
+  if(screen==='lesson'&&lessons.some(lesson=>lesson.n===Number(n)))return Number(n);
+  if(screen==='quiz'&&quiz&&!quiz.done){
+   const question=getQuestion(quiz.ids[quiz.index]);
+   if(lessons.some(lesson=>lesson.n===question?.lesson))return question.lesson;
+  }
+  return null;
+ },
+ lessonOptions:()=>lessons.map(lesson=>[String(lesson.n),lessonLabel(lesson.n)+' · '+lesson.zh]),
+ navigate:(page,mini=false)=>{
+  if(mini)miniAfterNavigation=true;
+  go(page);
+ }
+}):null;
+let miniAfterNavigation=false;
+
 function render(){
  const [page='home',n,tab]=(location.hash.slice(1)||'home').split('/');
  chrome(page);
- $('app').innerHTML=({home,lessons:lessonDirectory,lesson:()=>lessonPage(n,tab),bank,listening:workplaceListeningPage,exams:()=>exams.page(n,tab),practice,quiz:quizPage,progress,review,teacher:viewer.admin?teacher:home}[page]??home)();
+ $('app').innerHTML=({home,chat:tutor?()=> '':home,lessons:lessonDirectory,lesson:()=>lessonPage(n,tab),bank,listening:workplaceListeningPage,exams:()=>exams.page(n,tab),practice,quiz:quizPage,progress,review,teacher:viewer.admin?teacher:home}[page]??home)();
+ if(tutor){
+  tutor.update(page,location.hash.slice(1)||'home');
+  if(miniAfterNavigation&&page!=='chat'){miniAfterNavigation=false;tutor.showMini()}
+ }
  if(page==='quiz'&&quiz&&!quiz.done){
   const question=getQuestion(quiz.ids[quiz.index]);
   if(question)syncProgress.recordView('questions',question.id);

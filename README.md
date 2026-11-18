@@ -95,3 +95,18 @@ docker compose cp ../FangSchool-DuLieu/fangschool-backup.sqlite app:/tmp/fangsch
 docker compose exec app php artisan fangschool:import-site-data /tmp/fangschool-backup.sqlite
 docker compose exec app rm /tmp/fangschool-backup.sqlite
 ```
+
+### Hỏi AI
+
+Cấu hình hai biến sau trong file `.env` của môi trường chạy Laravel hoặc Docker Compose:
+
+```dotenv
+CF_AI_ACCOUNT_ID=
+CF_AI_API_TOKEN=
+```
+
+Dùng API token Cloudflare Workers AI cho đúng tài khoản. Giữ token ở backend. Nếu dùng token đã xuất hiện trong ảnh chụp hoặc đã chia sẻ, hãy thu hồi token đó và dùng token mới.
+
+Chạy `php artisan migrate --force` khi triển khai Laravel trực tiếp. Với Docker Compose, chạy `docker compose up -d --build`. Container tự chạy migration trên volume hiện có. Nếu triển khai có cache cấu hình, tạo lại cache sau khi cập nhật biến môi trường.
+
+Khi đã cấu hình, học viên và admin đăng nhập đều có mục **Hỏi AI** trên menu và nút chat nổi. Lịch sử được lưu theo email trong cơ sở dữ liệu của bản Laravel. Các cuộc chat trên bản Sites cần được xuất và nhập riêng nếu muốn chuyển sang Laravel. Ứng dụng không đặt giới hạn số tin nhắn mỗi ngày. Cloudflare áp dụng hạn mức và phí theo gói của tài khoản.

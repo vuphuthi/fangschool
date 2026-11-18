@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\TutorController;
 use App\Http\Controllers\StudyController;
 use App\Services\Access;
 use Illuminate\Support\Facades\Route;
@@ -14,6 +15,8 @@ Route::get('/audio/{filename}', [StudyController::class, 'audio'])->where('filen
 Route::get('/exams/{filename}', [StudyController::class, 'exam'])->where('filename', '[A-Za-z0-9-]+\.(pdf|webp)');
 
 Route::prefix('api')->group(function () {
+    Route::get('/ai/history', [TutorController::class, 'history']);
+    Route::post('/ai/chat', [TutorController::class, 'chat']);
     Route::post('/code', [AuthController::class, 'requestCode']);
     Route::post('/verify', [AuthController::class, 'verify']);
     Route::get('/session', [AuthController::class, 'session']);

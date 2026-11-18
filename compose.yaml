@@ -17,6 +17,8 @@ services:
       LOG_CHANNEL: stderr
       FANGSCHOOL_ADMIN_EMAILS: "${FANGSCHOOL_ADMIN_EMAILS:-}"
       FANGSCHOOL_MAIL_FROM: "${FANGSCHOOL_MAIL_FROM:-FangSchool <otp@mail.fangschool.site>}"
+      CF_AI_ACCOUNT_ID: "${CF_AI_ACCOUNT_ID:-}"
+      CF_AI_API_TOKEN: "${CF_AI_API_TOKEN:-}"
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
     volumes:
       - fangschool-data:/var/lib/fangschool
