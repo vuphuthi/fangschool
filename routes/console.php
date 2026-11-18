@@ -60,3 +60,26 @@ Illuminate\Support\Facades\Artisan::command('fangschool:import-site-data {file :
 
     return 0;
 })->purpose('Nhập quyền truy cập và tiến độ từ bản xuất FangSchool Site');
+
+// ----- Email nhắc học & báo cáo tuần -----
+$reportEmails = function ($command, array $log): int {
+    foreach ($log as [$kind, $email]) {
+        $command->line($kind.': '.$email);
+    }
+    $command->info(count($log).' email.');
+
+    return 0;
+};
+Illuminate\Support\Facades\Artisan::command('fangschool:remind {--dry-run : Chỉ liệt kê, không gửi}', function () use ($reportEmails): int {
+    return $reportEmails($this, app(App\Services\Reminders::class)->hourly(now()->getTimestampMs(), (bool) $this->option('dry-run')));
+})->purpose('Nhắc học viên giữ chuỗi ngày học và nhắc bài giao sắp hết hạn');
+Illuminate\Support\Facades\Artisan::command('fangschool:digest {--dry-run : Chỉ liệt kê, không gửi} {--learners : Gửi tổng kết tuần cho học viên thay vì giáo viên}', function () use ($reportEmails): int {
+    $reminders = app(App\Services\Reminders::class);
+    $now = now()->getTimestampMs();
+
+    return $reportEmails($this, $this->option('learners') ? $reminders->learnerWeekly($now, (bool) $this->option('dry-run')) : $reminders->teacherDigest($now, (bool) $this->option('dry-run')));
+})->purpose('Gửi báo cáo tuần cho giáo viên hoặc tổng kết tuần cho học viên');
+
+Schedule::command('fangschool:remind')->hourlyAt(0)->timezone('Asia/Ho_Chi_Minh')->withoutOverlapping()->name('fangschool-remind');
+Schedule::command('fangschool:digest')->weeklyOn(1, '07:30')->timezone('Asia/Ho_Chi_Minh')->withoutOverlapping()->name('fangschool-digest');
+Schedule::command('fangschool:digest --learners')->weeklyOn(0, '08:00')->timezone('Asia/Ho_Chi_Minh')->withoutOverlapping()->name('fangschool-weekly');

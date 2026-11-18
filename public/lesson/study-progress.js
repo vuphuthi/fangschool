@@ -1,10 +1,18 @@
 import {sameOriginFetch as fetch} from '../request.js';
-import {blankStudy,mergeStudy} from './study-habits.js?v=1';
+import {blankStudy,mergeStudy} from './study-habits.js?v=3';
 const viewLimits={questions:2500,examPages:1000};
 const blank=()=>({attempts:[],words:{},marks:{},history:[],last:1,views:mergeViews(),study:blankStudy()});
 const copy=state=>structuredClone(state);
+// Một lượt trả lời / một lượt nộp được nhận diện theo câu (hoặc tên lượt) và thời điểm.
+// Lượt được chấm lại sau đó (tự chấm, AI chấm) mang gradedAt; khi gộp giữ bản chấm mới nhất thay vì giữ cả hai.
+const rowKey=value=>value&&typeof value==='object'&&Number.isFinite(value.at)
+ ?[value.id??'',value.title??'',value.examCode??'',value.final??'',value.at].join('|'):JSON.stringify(value);
 const append=(remote,local)=>{
- const rows=new Map([...remote,...local].map(value=>[JSON.stringify(value),value]));
+ const rows=new Map();
+ for(const value of [...remote,...local]){
+  const key=rowKey(value),previous=rows.get(key);
+  if(!previous||(value?.gradedAt??0)>=(previous?.gradedAt??0))rows.set(key,value);
+ }
  return [...rows.values()].sort((a,b)=>a.at-b.at);
 };
 const changes=(map,previous)=>Object.fromEntries(Object.entries(map).filter(([key,value])=>previous[key]!==value));

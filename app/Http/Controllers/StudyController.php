@@ -65,6 +65,16 @@ final class StudyController
         return $user['admin'] ? $this->accessPage('progress') : $this->denied();
     }
 
+    public function assignmentsPage(Request $request)
+    {
+        $user = $this->access->identity($request, true);
+        if (!$user) {
+            return $this->accessPage($this->access->ready() ? 'login' : 'setup');
+        }
+
+        return $user['admin'] ? $this->accessPage('assignments') : $this->denied();
+    }
+
     public function sourcesPage(Request $request)
     {
         $user = $this->access->identity($request, true);
@@ -280,6 +290,8 @@ final class StudyController
                 || !is_int($card->due ?? null) || !is_int($card->at ?? null) || !is_int($card->step ?? null)
                 || $card->step < 1 || $card->step > 365 || $card->due <= 0 || $card->at <= 0
                 || (property_exists($card, 'first') && $card->first !== true)
+                // Thẻ ôn câu sai ("q:<id>") có thêm số ngày đã làm đúng: 0–2.
+                || (property_exists($card, 'hits') && (!is_int($card->hits) || $card->hits < 0 || $card->hits > 2))
                 || count(get_object_vars($card)) > 4) {
                 return false;
             }

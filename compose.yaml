@@ -1,25 +1,29 @@
+x-fangschool-env: &fangschool-env
+  APP_NAME: FangSchool
+  APP_ENV: production
+  APP_DEBUG: "false"
+  APP_URL: "${APP_URL:-http://localhost:${FANGSCHOOL_PORT:-8000}}"
+  DB_CONNECTION: sqlite
+  DB_DATABASE: /var/lib/fangschool/database.sqlite
+  SESSION_DRIVER: file
+  SESSION_SECURE_COOKIE: "false"
+  CACHE_STORE: file
+  LOG_CHANNEL: stderr
+  FANGSCHOOL_ADMIN_EMAILS: "${FANGSCHOOL_ADMIN_EMAILS:-}"
+  FANGSCHOOL_MAIL_FROM: "${FANGSCHOOL_MAIL_FROM:-FangSchool <otp@mail.fangschool.site>}"
+  FANGSCHOOL_ASSIGNMENTS: "${FANGSCHOOL_ASSIGNMENTS:-false}"
+  CF_AI_ACCOUNT_ID: "${CF_AI_ACCOUNT_ID:-}"
+  CF_AI_API_TOKEN: "${CF_AI_API_TOKEN:-}"
+  RESEND_API_KEY: "${RESEND_API_KEY:-}"
+
 services:
   app:
     build: .
+    image: fangschool-app
     init: true
     ports:
       - "127.0.0.1:${FANGSCHOOL_PORT:-8000}:80"
-    environment:
-      APP_NAME: FangSchool
-      APP_ENV: production
-      APP_DEBUG: "false"
-      APP_URL: "http://localhost:${FANGSCHOOL_PORT:-8000}"
-      DB_CONNECTION: sqlite
-      DB_DATABASE: /var/lib/fangschool/database.sqlite
-      SESSION_DRIVER: file
-      SESSION_SECURE_COOKIE: "false"
-      CACHE_STORE: file
-      LOG_CHANNEL: stderr
-      FANGSCHOOL_ADMIN_EMAILS: "${FANGSCHOOL_ADMIN_EMAILS:-}"
-      FANGSCHOOL_MAIL_FROM: "${FANGSCHOOL_MAIL_FROM:-FangSchool <otp@mail.fangschool.site>}"
-      CF_AI_ACCOUNT_ID: "${CF_AI_ACCOUNT_ID:-}"
-      CF_AI_API_TOKEN: "${CF_AI_API_TOKEN:-}"
-      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+    environment: *fangschool-env
     volumes:
       - fangschool-data:/var/lib/fangschool
     healthcheck:
@@ -28,6 +32,22 @@ services:
       timeout: 4s
       start_period: 20s
       retries: 5
+
+  # Gửi email nhắc học, nhắc bài giao và báo cáo tuần theo lịch (routes/console.php).
+  scheduler:
+    image: fangschool-app
+    pull_policy: never
+    init: true
+    command: ["runuser", "-u", "www-data", "--", "php", "artisan", "schedule:work"]
+    environment: *fangschool-env
+    volumes:
+      - fangschool-data:/var/lib/fangschool
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: unless-stopped
 
 volumes:
   fangschool-data:

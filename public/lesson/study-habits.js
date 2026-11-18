@@ -105,12 +105,27 @@ export function heatmap(state, now = Date.now(), weeks = 16) {
  return {cells, activeDays: active.length, minutes: active.reduce((n, c) => n + c.minutes, 0), answers: active.reduce((n, c) => n + c.answers, 0)};
 }
 
-// Lặp lại ngắt quãng: Quên → 1 ngày, Nhớ mang máng → 3 ngày, Nhớ rõ → 7 → 14 → 30 → 60 ngày.
+// Lặp lại ngắt quãng, khoảng ôn tính theo khoảng trước đó:
+// Quên → 1 ngày · Nhớ mang máng → ×1,4 (tối thiểu 3 ngày) · Nhớ rõ → ×2,2 (tối thiểu 7 ngày), tối đa 180 ngày.
+export const MAX_STEP = 180;
 export function nextStep(card, rating) {
- if (rating === 'hard') return 1;
- if (rating === 'ok') return 3;
  const prev = card?.step ?? 0;
- return prev >= 30 ? 60 : prev >= 14 ? 30 : prev >= 7 ? 14 : 7;
+ if (rating === 'hard') return 1;
+ if (rating === 'ok') return prev < 3 ? 3 : Math.min(MAX_STEP, Math.round(prev * 1.4));
+ return prev < 7 ? 7 : Math.min(MAX_STEP, Math.round(prev * 2.2));
+}
+
+// Chiều ôn của thẻ, xoay vòng theo mức thuộc để luyện cả nhận diện lẫn nhớ lại:
+// read: chữ Hán → nghĩa · listen: nghe → nghĩa · recall: nghĩa → chữ Hán + pinyin.
+// Từ mới / đang học chủ yếu đọc; từ đã thuộc chuyển sang nghe và nhớ ngược để kiểm tra thật.
+export const CARD_DIRECTIONS = {read: 'Đọc → nghĩa', listen: 'Nghe → nghĩa', recall: 'Nghĩa → chữ Hán'};
+export function cardDirection(card, wordId, canListen) {
+ const step = card?.step ?? 0;
+ const options = step < 3 ? ['read'] : step < 7 ? ['read', 'listen', 'recall'] : ['recall', 'listen', 'recall'];
+ const usable = options.filter(d => d !== 'listen' || canListen);
+ let hash = 0;
+ for (const char of String(wordId) + ':' + (card?.due ?? 0)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+ return usable[hash % usable.length];
 }
 
 export function rateCard(state, wordId, rating, now = Date.now()) {
@@ -121,6 +136,37 @@ export function rateCard(state, wordId, rating, now = Date.now()) {
  return step;
 }
 
+// Trạng thái một từ, lấy từ lịch ôn thẻ (nguồn chính); dấu "Đã thuộc / Chưa thuộc" cũ chỉ dùng khi từ chưa có thẻ.
+// known: nhớ rõ (khoảng ôn ≥ 7 ngày) · learning: đang ôn · new: chưa học.
+export const KNOWN_STEP = 7;
+export function wordStatus(state, id) {
+ const card = state.study?.srs?.[id];
+ if (card) return card.step >= KNOWN_STEP ? 'known' : 'learning';
+ const mark = state.words?.[id];
+ return mark === 'known' ? 'known' : mark === 'unknown' ? 'learning' : 'new';
+}
+
+// Ôn câu sai theo lịch, lưu trong study.srs với khoá "q:<id câu>" và đúng khuôn thẻ {due, step, at, hits}
+// mà máy chủ kiểm tra. Sai → gặp lại ngày mai. Đúng ở một ngày khác → hẹn 3 ngày sau.
+// Đúng ở 2 ngày khác nhau (hits = 2) → câu đã vững, rời danh sách câu sai.
+export const questionKey = id => 'q:' + id;
+export const QUESTION_CLEAR = 2;
+export const isQuestionKey = key => key.startsWith('q:');
+export function reviewQuestion(state, id, correct, now = Date.now()) {
+ if (correct !== true && correct !== false) return null;
+ const study = ensureStudy(state), key = questionKey(id), card = study.srs[key];
+ if (!correct) study.srs[key] = {due: shiftDay(startOfDay(now), 1), step: 1, at: now, hits: 0};
+ else if (card && (card.hits ?? 0) < QUESTION_CLEAR && dayKey(card.at) !== dayKey(now)) {
+  const hits = (card.hits ?? 0) + 1;
+  study.srs[key] = hits >= QUESTION_CLEAR ? {due: now, step: KNOWN_STEP, at: now, hits} : {due: shiftDay(startOfDay(now), 3), step: 3, at: now, hits};
+ }
+ study.srs = trim(study.srs, srsLimit, ([, v]) => v.at);
+ return study.srs[key] ?? null;
+}
+export function questionCard(state, id) { return state.study?.srs?.[questionKey(id)] ?? null; }
+export const questionActive = card => Boolean(card) && (card.hits ?? 0) < QUESTION_CLEAR;
+export const questionDue = (card, now = Date.now()) => questionActive(card) && card.due < startOfDay(now) + DAY;
+
 // Hàng đợi hôm nay: thẻ đến hạn → từ đánh dấu chưa thuộc → tối đa 5 từ mới từ các bài đã học.
 export function dueQueue(state, lessons, now = Date.now(), newLimit = 5) {
  const study = ensureStudy(state), endOfToday = startOfDay(now) + DAY;
@@ -130,7 +176,7 @@ export function dueQueue(state, lessons, now = Date.now(), newLimit = 5) {
  const due = words.filter(w => study.srs[w.id] && study.srs[w.id].due < endOfToday)
   .sort((a, b) => study.srs[a.id].due - study.srs[b.id].due).filter(pick);
  const unknown = words.filter(w => !study.srs[w.id] && state.words?.[w.id] === 'unknown').filter(pick);
- const today = Object.values(study.srs).filter(c => c.at >= startOfDay(now));
+ const today = Object.entries(study.srs).filter(([key, c]) => !isQuestionKey(key) && c.at >= startOfDay(now)).map(([, c]) => c);
  const reviewedToday = today.length;
  const newToday = Math.max(0, newLimit - today.filter(c => c.first).length);
  const fresh = words.filter(w => w.n <= (state.last ?? 1) && !study.srs[w.id] && !state.words?.[w.id]).filter(pick).slice(0, newToday);

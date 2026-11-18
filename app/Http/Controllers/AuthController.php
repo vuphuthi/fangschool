@@ -3,16 +3,16 @@
 namespace App\Http\Controllers;
 
 use App\Services\Access;
+use App\Services\Mailer;
 use App\Services\WorkersAi;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\RateLimiter;
 
 final class AuthController
 {
-    public function __construct(private readonly Access $access) {}
+    public function __construct(private readonly Access $access, private readonly Mailer $mailer) {}
 
     public function requestCode(Request $request): JsonResponse
     {
@@ -45,14 +45,10 @@ final class AuthController
             return response()->json(['message' => 'Mã OTP vừa được yêu cầu. Hãy kiểm tra hộp thư đến hoặc thư rác.']);
         }
 
-        try {
-            Http::withToken(config('fangschool.resend_key'))->timeout(10)->acceptJson()
-                ->post('https://api.resend.com/emails', [
-                    'from' => config('fangschool.mail_from'), 'to' => [$email],
-                    'subject' => 'Mã đăng nhập FangSchool', 'html' => view('otp', ['code' => $code, 'email' => $email])->render(),
-                    'text' => "Mã đăng nhập FangSchool\n\nMã của bạn: {$code}\n\nMã có hiệu lực 10 phút và chỉ dùng được một lần.\nEmail đăng nhập: {$email}\n\nNếu bạn không yêu cầu đăng nhập, hãy bỏ qua email này.\nKhông chia sẻ mã cho bất kỳ ai.\n\nFangSchool",
-                ])->throw();
-        } catch (\Exception) {
+        // Dựng thư ngoài phần gửi để lỗi mẫu email hiện rõ thay vì bị báo nhầm là "dịch vụ bận".
+        $html = view('otp', ['code' => $code, 'email' => $email])->render();
+        $text = "Mã đăng nhập FangSchool\n\nMã của bạn: {$code}\n\nMã có hiệu lực 10 phút và chỉ dùng được một lần.\nEmail đăng nhập: {$email}\n\nNếu bạn không yêu cầu đăng nhập, hãy bỏ qua email này.\nKhông chia sẻ mã cho bất kỳ ai.\n\nFangSchool";
+        if (!$this->mailer->send($email, 'Mã đăng nhập FangSchool', $html, $text)) {
             DB::table('otp_challenges')->where('email', $email)->where('id', $id)->delete();
 
             return response()->json(['error' => 'Dịch vụ gửi email đang bận. Hãy thử lại sau.'], 503);

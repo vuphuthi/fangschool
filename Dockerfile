@@ -4,7 +4,11 @@ COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY vite.config.js ./
 COPY resources/js ./resources/js
-RUN npm run build
+# Hanzi Writer (MIT) và dữ liệu nét chữ (Arphic Public License) được tự phục vụ ở /build/hanzi.
+RUN npm run build \
+    && mkdir -p public/build/hanzi \
+    && cp node_modules/hanzi-writer/dist/hanzi-writer.min.js node_modules/hanzi-writer-data/ARPHICPL.TXT public/build/hanzi/ \
+    && find node_modules/hanzi-writer-data -maxdepth 1 -name "*.json" ! -name package.json -exec cp -t public/build/hanzi/ {} +
 
 FROM composer:2 AS composer-bin
 
