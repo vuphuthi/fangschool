@@ -227,6 +227,11 @@ final class StudyController
                     return response()->json(['error' => 'Dữ liệu thói quen học không hợp lệ.'], 400);
                 }
                 $study = ['goal' => $state->study->goal, 'days' => $state->study->days, 'srs' => $state->study->srs];
+                // Bản cũ của trang (chưa biết lộ trình thi) gửi lên không có plan: giữ plan đã lưu.
+                $plan = property_exists($state->study, 'plan') ? $state->study->plan : ($previous()->study->plan ?? null);
+                if ($plan !== null) {
+                    $study['plan'] = $plan;
+                }
             } else {
                 $study = $previous()->study ?? null;
             }
@@ -293,6 +298,30 @@ final class StudyController
                 // Thẻ ôn câu sai ("q:<id>") có thêm số ngày đã làm đúng: 0–2.
                 || (property_exists($card, 'hits') && (!is_int($card->hits) || $card->hits < 0 || $card->hits > 2))
                 || count(get_object_vars($card)) > 4) {
+                return false;
+            }
+        }
+
+        return !property_exists($study, 'plan') || $this->validPlan($study->plan);
+    }
+
+    /**
+     * Lộ trình thi: ngày thi ("" khi chưa đặt) và các lần kiểm tra 5 phút
+     * (p: kiểm tra đầu vào, w: kiểm tra tuần) để vẽ đường tiến bộ.
+     */
+    private function validPlan(mixed $plan): bool
+    {
+        if (!is_object($plan) || count(get_object_vars($plan)) > 2 || !is_string($plan->exam ?? null)
+            || ($plan->exam !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/D', $plan->exam))
+            || !is_array($plan->checks ?? null) || count($plan->checks) > 60) {
+            return false;
+        }
+        foreach ($plan->checks as $check) {
+            if (!is_object($check) || count(get_object_vars($check)) > 4
+                || !is_int($check->at ?? null) || $check->at <= 0
+                || !is_int($check->max ?? null) || !in_array($check->max, [200, 300], true)
+                || !is_int($check->total ?? null) || $check->total < 0 || $check->total > $check->max
+                || !in_array($check->kind ?? null, ['p', 'w'], true)) {
                 return false;
             }
         }

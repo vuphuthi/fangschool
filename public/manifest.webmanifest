@@ -1,0 +1,20 @@
+{
+  "name": "FangSchool · Tiếng Trung HSK",
+  "short_name": "FangSchool",
+  "description": "Học tiếng Trung HSK 10 phút mỗi ngày: ôn thẻ, sửa câu sai, luyện nói và đọc truyện bằng từ bạn đã biết.",
+  "lang": "vi",
+  "start_url": "/?source=app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f7f5",
+  "theme_color": "#0c3a2e",
+  "icons": [
+    {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "shortcuts": [
+    {"name": "Học 10 phút", "short_name": "Học ngay", "url": "/?source=app#today", "icons": [{"src": "/icons/icon-192.png", "sizes": "192x192"}]}
+  ]
+}

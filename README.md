@@ -73,6 +73,15 @@ DB_PASSWORD=replace-with-your-password
 3. Cài dependencies bằng Composer, chạy `npm ci && npm run build`, sau đó `php artisan migrate --force`. PHP cần ghi được vào `storage/framework`, `storage/logs` và `bootstrap/cache`. Dùng `php artisan schedule:run` theo lịch chuẩn của Laravel để dọn phiên và OTP hết hạn.
 4. Trước khi chuyển `fangschool.site`, thử gửi OTP thật trong môi trường đích, xác nhận giới hạn HSK qua URL trực tiếp, thử lưu tiến độ, nghe MP3 và làm đề trên điện thoại. Sao lưu cơ sở dữ liệu và học liệu trước khi chuyển.
 
+## Trải nghiệm học
+
+- **Học 10 phút** (trang chủ, `#today`): một buổi học liền mạch ở chế độ tập trung, gồm thẻ đến hạn → từ mới → câu sai đến hạn → câu luyện của bài đang học → một câu nghe → luyện thanh điệu. Phím tắt: Space lật thẻ, 1–3 chấm thẻ, 1–4 chọn đáp án, Enter kiểm tra/câu tiếp. Kết thúc bằng **biên lai tiến bộ**: số từ mới, câu đúng, câu sai đã sửa, % chữ đọc hiểu được trong hội thoại của bài, dự đoán điểm (chỉ so sánh khi đã có từ 40 câu chấm).
+- **Âm Hán Việt** (`public/lesson/hanviet.js`): bảng soạn tay cho toàn bộ chữ trong từ vựng, chữ đa âm chọn theo pinyin. Hiện trên thẻ từ, thẻ ôn và ô tra từ; từ đọc gần giống tiếng Việt (注意 = CHÚ Ý) được đánh dấu "≈ tiếng Việt". Báo âm sai qua tính năng báo lỗi.
+- **Lộ trình thi**: kiểm tra đầu vào 12 câu, sau đó mỗi tuần kiểm tra lại 5 phút, quy ra điểm theo thang HSK. Học viên đặt ngày thi; FangSchool vẽ đường tiến bộ và dự báo điểm ngày thi bằng mô hình bão hoà (thận trọng). Lưu trong `study.plan` của tiến độ.
+- **Đọc truyện** (`#story`, cần AI): Workers AI viết truyện 5–7 câu chỉ dùng từ học viên đã học, cộng 1–2 từ mới, kèm câu hỏi đọc hiểu; đọc bằng giọng AI (`/api/ai/story`, `/api/ai/speech`).
+- **Luyện thanh điệu** (`public/lesson/tone-coach.js`): đo cao độ bằng YIN ngay trên trình duyệt, vẽ đường giọng học viên chồng lên giọng mẫu và khuôn thanh, cho điểm "giống giọng mẫu". Không tự chấm đúng/sai từng âm tiết vì thử trên giọng bản ngữ cách đó chưa đủ tin cậy.
+- **Ứng dụng & nhắc học**: cài được lên màn hình chính (PWA, `public/manifest.webmanifest`, `public/sw.js`). Thông báo đẩy Web Push (VAPID, mã hoá RFC 8291 trong `app/Services/WebPush.php`) gửi cùng giờ với email nhắc học. Khoá VAPID tự tạo lần đầu tại `FANGSCHOOL_VAPID_FILE`, hoặc đặt sẵn qua `FANGSCHOOL_VAPID_PUBLIC`/`FANGSCHOOL_VAPID_PRIVATE`. Thông báo cần HTTPS; trên iPhone cần cài ứng dụng lên màn hình chính trước.
+
 ## Luồng dữ liệu
 
 - `grants` lưu quyền HSK, `workplace_grants` lưu quyền Công xưởng và Văn phòng, `learner_progress` lưu snapshot theo email và mã khóa học. Thời hạn và dấu thời gian dùng epoch milliseconds.

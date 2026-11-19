@@ -14,6 +14,7 @@ final class Reminders
         private readonly Assignments $assignments,
         private readonly Mailer $mailer,
         private readonly TeachingController $teaching,
+        private readonly WebPush $push,
     ) {}
 
     private function vnNow(int $now): \DateTimeImmutable
@@ -42,10 +43,13 @@ final class Reminders
         $hour = (int) $this->vnNow($now)->format('G');
         $today = $this->vnNow($now)->format('Y-m-d');
         $prefs = DB::table('email_prefs')->get()->keyBy('email');
+        // Thiết bị đã bật nhắc học là lựa chọn riêng: vẫn nhận thông báo đẩy khi đã tắt email nhắc học.
+        $pushUsers = array_flip(DB::table('push_subscriptions')->distinct()->pluck('email')->all());
 
         foreach ($this->learners($now) as $email) {
             $pref = $prefs[$email] ?? null;
-            if (($pref && !$pref->streak) || ($pref->hour ?? 20) !== $hour) {
+            $wantsEmail = !$pref || $pref->streak;
+            if ((!$wantsEmail && !isset($pushUsers[$email])) || ($pref->hour ?? 20) !== $hour) {
                 continue;
             }
             if ($pref && $pref->last_reminder_at && Learning::dayKey((int) $pref->last_reminder_at) === $today) {
@@ -82,7 +86,17 @@ final class Reminders
             $subject = $streak > 0 ? 'Đừng để mất chuỗi '.$streak.' ngày nhé!' : 'Hôm nay học 10 phút với FangSchool nhé';
             $html = view('emails.reminder', ['subjectLine' => $subject, 'streak' => $streak, 'items' => $items, 'url' => $this->url(), 'prefsUrl' => $this->url('#progress')])->render();
             $text = $subject."\n\n".implode("\n", array_map(fn ($i) => $i[0].': '.$i[1], $items))."\n\nHọc ngay: ".$this->url()."\nĐổi giờ nhắc hoặc tắt email: ".$this->url('#progress');
-            if ($this->mailer->send($email, $subject, $html, $text)) {
+            // Thông báo đẩy tới các thiết bị đã bật nhắc học, cùng giờ với email.
+            $pushed = !isset($pushUsers[$email]) ? 0 : $this->push->sendTo($email, [
+                'title' => $subject,
+                'body' => $items ? implode(' · ', array_map(fn ($i) => $i[0].': '.$i[1], $items)) : 'Mở FangSchool học 10 phút để giữ nhịp nhé.',
+                'url' => '/#today', 'tag' => 'fangschool-daily',
+            ]);
+            if ($pushed) {
+                $log[] = ['push', $email];
+            }
+            $mailed = $wantsEmail && $this->mailer->send($email, $subject, $html, $text);
+            if ($mailed || $pushed) {
                 DB::table('email_prefs')->upsert([['email' => $email, 'streak' => true, 'weekly' => (bool) ($pref->weekly ?? false), 'hour' => $pref->hour ?? 20, 'last_reminder_at' => $now]], ['email'], ['last_reminder_at']);
             }
         }

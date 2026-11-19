@@ -381,6 +381,103 @@ PROMPT;
         abort(404, 'Không tìm thấy bài trong học liệu.');
     }
 
+    private const STORY_PROMPT = <<<'PROMPT'
+Bạn viết truyện đọc hiểu tiếng Trung cho người Việt trình độ {level}. Mục tiêu: người học đọc được gần như toàn bộ truyện bằng chính những từ họ đã học.
+
+Quy tắc:
+- Chỉ dùng các từ trong DANH SÁCH TỪ ĐÃ BIẾT, cộng thêm đúng các TỪ MỚI được cho (mỗi từ mới dùng ít nhất một lần). Được dùng thêm hư từ rất cơ bản: 的、了、吗、呢、吧、是、不、很、也、都、在、和、我、你、他、她、我们、这、那、一、个.
+- 5–7 câu ngắn, mỗi câu tối đa 16 chữ Hán, chữ giản thể, có mạch chuyện đời thường (có nhân vật, tình huống, kết thúc nhỏ).
+- Pinyin có dấu thanh, tách âm tiết theo từ. Nghĩa tiếng Việt tự nhiên.
+- 2 câu hỏi đọc hiểu bằng tiếng Việt, mỗi câu 3 lựa chọn tiếng Việt, chỉ một lựa chọn đúng.
+
+Chỉ trả về JSON đúng khuôn, không markdown, không lời dẫn:
+{"title":"tiêu đề tiếng Trung ngắn","titleVi":"tiêu đề tiếng Việt","sentences":[{"zh":"…","pinyin":"…","vi":"…"}],"questions":[{"q":"…","options":["…","…","…"],"answer":0}]}
+PROMPT;
+
+    /** Truyện ngắn chỉ dùng từ người học đã biết, cộng 1–3 từ mới (đọc hiểu "vừa sức"). */
+    public function story(Request $request): JsonResponse
+    {
+        $viewer = $this->viewer($request);
+        abort_unless(WorkersAi::ready(), 503, 'Trợ giảng AI chưa được kết nối.');
+        $input = $request->validate([
+            'course' => 'nullable|integer',
+            'known' => 'required|array|min:8|max:240',
+            'known.*' => 'string|max:80',
+            'fresh' => 'nullable|array|max:3',
+            'fresh.*' => 'string|max:80',
+            'topic' => 'nullable|string|max:80',
+        ], ['known.min' => 'Bạn cần biết ít nhất 8 từ để đọc truyện. Học thêm vài từ rồi quay lại nhé.']);
+        $clean = fn (array $words) => array_values(array_unique(array_filter(array_map(
+            fn ($word) => preg_match('/\A\p{Han}{1,8}\z/u', trim($word)) ? trim($word) : null, $words))));
+        $known = $clean($input['known']);
+        $fresh = $clean($input['fresh'] ?? []);
+        abort_if(count($known) < 8, 422, 'Bạn cần biết ít nhất 8 từ để đọc truyện. Học thêm vài từ rồi quay lại nhé.');
+        $this->limit('story', $viewer, 20);
+
+        $level = self::COURSES[(int) ($input['course'] ?? 0)] ?? 'sơ cấp';
+        $task = 'DANH SÁCH TỪ ĐÃ BIẾT: '.implode('、', $known)
+            ."\nTỪ MỚI: ".($fresh ? implode('、', $fresh) : '(không có)')
+            .(filled($input['topic'] ?? null) ? "\nCHỦ ĐỀ GỢI Ý: ".trim($input['topic']) : '');
+        $messages = [
+            ['role' => 'system', 'content' => strtr(self::STORY_PROMPT, ['{level}' => $level])],
+            ['role' => 'user', 'content' => $task],
+        ];
+        $result = null;
+        for ($try = 0; $try < 2 && $result === null; $try++) {
+            try {
+                $raw = $this->ai->answer($messages, think: false, maxTokens: 1400, temperature: 0.8);
+            } catch (HttpExceptionInterface $exception) {
+                if ($try === 0 && $exception->getStatusCode() === 502) {
+                    continue;
+                }
+
+                return $this->json(['error' => $exception->getMessage()], $exception->getStatusCode());
+            }
+            $result = $this->storyResult($raw);
+            if ($result === null) {
+                Log::warning('AI story: không đọc được truyện', ['try' => $try + 1, 'raw' => mb_substr($raw, 0, 1500)]);
+            }
+        }
+        abort_unless($result, 502, 'AI chưa viết được truyện. Vui lòng thử lại.');
+
+        return $this->json($result);
+    }
+
+    private function storyResult(string $raw): ?array
+    {
+        $start = strpos($raw, '{');
+        $end = strrpos($raw, '}');
+        if ($start === false || $end === false || $end < $start) {
+            return null;
+        }
+        $data = json_decode(substr($raw, $start, $end - $start + 1), true);
+        if (!is_array($data) || !is_array($data['sentences'] ?? null)) {
+            return null;
+        }
+        $text = fn ($value, int $max) => is_string($value) ? mb_substr(trim($value), 0, $max) : '';
+        $sentences = [];
+        foreach (array_slice($data['sentences'], 0, 9) as $row) {
+            $zh = is_array($row) ? $text($row['zh'] ?? null, 60) : '';
+            if ($zh !== '' && preg_match('/\p{Han}/u', $zh)) {
+                $sentences[] = ['zh' => $zh, 'pinyin' => $text($row['pinyin'] ?? null, 200), 'vi' => $text($row['vi'] ?? null, 200)];
+            }
+        }
+        if (count($sentences) < 3) {
+            return null;
+        }
+        $questions = [];
+        foreach (array_slice(is_array($data['questions'] ?? null) ? $data['questions'] : [], 0, 3) as $row) {
+            // Giữ nguyên vị trí lựa chọn để chỉ số đáp án còn đúng; bỏ cả câu nếu có lựa chọn rỗng.
+            $options = is_array($row['options'] ?? null) ? array_map(fn ($o) => $text($o, 120), array_values(array_slice($row['options'], 0, 4))) : [];
+            $answer = $row['answer'] ?? null;
+            if ($text($row['q'] ?? null, 200) !== '' && count($options) >= 2 && !in_array('', $options, true) && is_int($answer) && isset($options[$answer])) {
+                $questions[] = ['q' => $text($row['q'], 200), 'options' => $options, 'answer' => $answer];
+            }
+        }
+
+        return ['title' => $text($data['title'] ?? null, 40), 'titleVi' => $text($data['titleVi'] ?? null, 80), 'sentences' => $sentences, 'questions' => $questions];
+    }
+
     private function json(array $data, int $status = 200): JsonResponse
     {
         return response()->json($data, $status)->header('Cache-Control', 'private, no-store');

@@ -12,7 +12,19 @@ export const dayKey = (time = Date.now()) => {
 const startOfDay = (time = Date.now()) => { const d = new Date(time); d.setHours(0, 0, 0, 0); return d.getTime(); };
 const shiftDay = (time, n) => { const d = new Date(time); d.setDate(d.getDate() + n); return d.getTime(); };
 
-export function blankStudy() { return {goal: 20, days: {}, srs: {}}; }
+export function blankStudy() { return {goal: 20, days: {}, srs: {}, plan: blankPlan()}; }
+
+// Lộ trình thi: ngày thi (YYYY-MM-DD hoặc "") và các lần kiểm tra 5 phút {at, total, max, kind: p|w}.
+export const blankPlan = () => ({exam: '', checks: []});
+const checkLimit = 60;
+function cleanPlan(p) {
+ const exam = typeof p?.exam === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.exam) ? p.exam : '';
+ const checks = (Array.isArray(p?.checks) ? p.checks : [])
+  .filter(c => c && Number.isSafeInteger(c.at) && c.at > 0 && [200, 300].includes(c.max) && Number.isInteger(c.total) && c.total >= 0 && c.total <= c.max && ['p', 'w'].includes(c.kind))
+  .map(({at, total, max, kind}) => ({at, total, max, kind}))
+  .sort((a, b) => a.at - b.at).slice(-checkLimit);
+ return {exam, checks};
+}
 
 export function ensureStudy(state) {
  const s = state.study && typeof state.study === 'object' ? state.study : {};
@@ -20,8 +32,15 @@ export function ensureStudy(state) {
   goal: goalChoices.includes(s.goal) ? s.goal : 20,
   days: s.days && typeof s.days === 'object' ? s.days : {},
   srs: s.srs && typeof s.srs === 'object' ? s.srs : {},
+  plan: cleanPlan(s.plan),
  };
  return state.study;
+}
+
+function mergePlan(remote, local, base) {
+ const r = cleanPlan(remote), l = cleanPlan(local), b = cleanPlan(base);
+ const checks = new Map([...r.checks, ...l.checks].map(c => [c.at, c]));
+ return cleanPlan({exam: l.exam !== b.exam ? l.exam : r.exam, checks: [...checks.values()]});
 }
 
 function trim(map, limit, score) {
@@ -41,6 +60,7 @@ export function mergeStudy(remote, local, base) {
   goal: l.goal !== b.goal ? l.goal : r.goal ?? l.goal,
   days: trim(days, dayLimit, ([key]) => Date.parse(key)),
   srs: trim(srs, srsLimit, ([, value]) => value.at),
+  plan: mergePlan(r.plan, l.plan, b.plan),
  };
 }
 
@@ -190,6 +210,23 @@ const examParts = {
  3: {pass: 180, parts: [['Nghe', 100, ['listen']], ['Đọc', 100, ['reading', 'vocab']], ['Viết', 100, ['grammar']]]},
  4: {pass: 180, parts: [['Nghe', 100, ['listen']], ['Đọc', 100, ['reading', 'vocab']], ['Viết', 100, ['grammar']]]},
 };
+// Điểm một lần kiểm tra 5 phút: tỷ lệ đúng từng phần (theo kỹ năng) quy về thang điểm HSK của cấp đó.
+// Phần chưa có câu nào lấy tỷ lệ trung bình các phần đã có.
+export function scoreCheck(course, answers, {getQuestion, lessonSkill}) {
+ const plan = examParts[course];
+ if (!plan) return null;
+ const parts = plan.parts.map(([name, max, skills]) => {
+  const rows = answers.filter(a => a && !a.skipped && (a.grade === true || a.grade === false) && skills.includes(lessonSkill(getQuestion(a.id) ?? {})));
+  return {name, max, ratio: rows.length ? rows.filter(a => a.grade).length / rows.length : null};
+ });
+ const known = parts.filter(p => p.ratio !== null);
+ if (!known.length) return null;
+ const mean = known.reduce((n, p) => n + p.ratio, 0) / known.length;
+ const total = Math.round(parts.reduce((n, p) => n + (p.ratio ?? mean) * p.max, 0));
+ return {total, max: plan.parts.length * 100, pass: plan.pass, parts: parts.map(p => ({name: p.name, max: p.max, score: p.ratio === null ? null : Math.round(p.ratio * p.max)}))};
+}
+export const examPass = course => examParts[course] ? {pass: examParts[course].pass, max: examParts[course].parts.length * 100} : null;
+
 const examSectionPart = name => /nghe|听/i.test(name) ? 'Nghe' : /viết|书写|写/i.test(name) ? 'Viết' : 'Đọc';
 
 export function predictScore(state, {course, getQuestion, lessonSkill, recent = 300}) {

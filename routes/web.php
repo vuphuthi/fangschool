@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\PushController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\TutorController;
 use App\Http\Controllers\StudyController;
@@ -25,6 +26,7 @@ Route::prefix('api')->group(function () {
     Route::post('/ai/grade', [TutorController::class, 'grade']);
     Route::post('/ai/speech', [TutorController::class, 'speech']);
     Route::post('/ai/transcribe', [TutorController::class, 'transcribe']);
+    Route::post('/ai/story', [TutorController::class, 'story']);
     Route::post('/code', [AuthController::class, 'requestCode']);
     Route::post('/verify', [AuthController::class, 'verify']);
     Route::get('/session', [AuthController::class, 'session']);
@@ -58,4 +60,10 @@ Route::prefix('api')->group(function () {
 
     // Email nhắc học
     Route::match(['GET', 'PUT'], '/email-prefs', [TeachingController::class, 'emailPrefs']);
+
+    // Thông báo đẩy nhắc học (Web Push)
+    Route::get('/push/key', [PushController::class, 'key']);
+    Route::put('/push', [PushController::class, 'subscribe']);
+    Route::delete('/push', [PushController::class, 'unsubscribe']);
+    Route::post('/push/test', [PushController::class, 'test']);
 });

@@ -1,5 +1,5 @@
 import {sameOriginFetch as fetch} from '../request.js';
-import {blankStudy,mergeStudy} from './study-habits.js?v=3';
+import {blankStudy,mergeStudy} from './study-habits.js?v=4';
 const viewLimits={questions:2500,examPages:1000};
 const blank=()=>({attempts:[],words:{},marks:{},history:[],last:1,views:mergeViews(),study:blankStudy()});
 const copy=state=>structuredClone(state);
